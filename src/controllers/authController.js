@@ -108,7 +108,7 @@ const signIn = async (req,res) =>{
 const refreshToken = (req,res) => {
     const {refresh_token} = req.body;
     try{
-        if (!refresh_token) return res.status(401).json({ msg: 'Refresh token required' });
+        if (!refresh_token) return res.status(401).json({ message: 'Refresh token required' });
 
     
         const decoded = jwt.verify(refresh_token,process.env.REFRESH_JWT_SECRET);
