@@ -9,6 +9,7 @@ require("dotenv").config();
 const PORT = process.env.PORT || 3001 ;
 
 initDb();
+
 app.use(express.json());
 app.use("/auth",authRouter);
 app.use("/user",verifyToken,userRouter)

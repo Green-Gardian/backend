@@ -1,23 +1,19 @@
-const {pool} = require("../config/db");
+const { pool } = require("../config/db");
 const nodemailer = require("nodemailer");
 const jwt = require("jsonwebtoken");
-const {google} = require("googleapis");
+const { google } = require("googleapis");
 const bcrypt = require("bcrypt");
 const OAuth2 = google.auth.OAuth2;
 require("dotenv").config();
 
 
 const addAdmin = async (req, res) => {
-    const {username, email, societyName, societyAddress, phoneNumber} = req.body;
+    const { username, email, societyName, societyAddress, phoneNumber } = req.body;
 
     try {
-        if(!username || !email || !societyName || !societyAddress || !phoneNumber) {
-            return res.status(400).json({message: "All fields are required"}); 
-        }
-
         const emailRegex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
-        if(!emailRegex.test(email)) {
-            return res.status(400).json({message: "Invalid email address"});
+        if (!emailRegex.test(email)) {
+            return res.status(400).json({ message: "Invalid email address" });
         }
 
         // Check if email already exists
@@ -25,10 +21,10 @@ const addAdmin = async (req, res) => {
             text: "SELECT id FROM admin WHERE email = $1",
             values: [email]
         };
-        
+
         const emailCheck = await pool.query(checkEmailQuery);
-        if(emailCheck.rows.length > 0) {
-            return res.status(409).json({message: "Email already registered"});
+        if (emailCheck.rows.length > 0) {
+            return res.status(409).json({ message: "Email already registered" });
         }
 
         const addQuery = {
@@ -37,18 +33,18 @@ const addAdmin = async (req, res) => {
         };
 
         const queryRes = await pool.query(addQuery);
-        
-        if(queryRes.rows.length === 0) {
-            return res.status(500).json({message: "Error inserting record"});
+
+        if (queryRes.rows.length === 0) {
+            return res.status(500).json({ message: "Error inserting record" });
         }
-        
+
         const addedRecord = queryRes.rows[0];
 
         // Generate token for password setup
         const token = jwt.sign(
-            {id: addedRecord.id, role: 'admin'}, 
-            process.env.JWT_SECRET,
-            {expiresIn: "15m"}
+            { id: addedRecord.id, role: 'admin' },
+            process.env.JWT_ACCESS_SECRET,
+            { expiresIn: process.env.JWT_ACCESS_EXPIRY }
         );
 
         const link = `${process.env.FRONTEND_URL || 'http://localhost:5000'}/user/set-password?token=${token}`;
@@ -58,7 +54,7 @@ const addAdmin = async (req, res) => {
             const OAuth2Client = new OAuth2(
                 process.env.OAUTH_CLIENT_ID,
                 process.env.OAUTH_CLIENT_SECRET,
-                "https://developers.google.com/oauthplayground" 
+                "https://developers.google.com/oauthplayground"
             );
 
             OAuth2Client.setCredentials({
@@ -72,7 +68,7 @@ const addAdmin = async (req, res) => {
                 service: 'gmail',
                 auth: {
                     type: "OAuth2",
-                    user: process.env.EMAIL_USER,
+                    user: process.env.SENDER_EMAIL,
                     clientId: process.env.OAUTH_CLIENT_ID,
                     clientSecret: process.env.OAUTH_CLIENT_SECRET,
                     refreshToken: process.env.OAUTH_REFRESH_TOKEN,
@@ -81,7 +77,7 @@ const addAdmin = async (req, res) => {
             });
 
             await transporter.sendMail({
-                from: `GreenGuardian <${process.env.EMAIL_USER}>`,
+                from: `GreenGuardian <${process.env.SENDER_EMAIL}>`,
                 to: email,
                 subject: "Set your password for GreenGuardian",
                 html: `
@@ -99,7 +95,7 @@ const addAdmin = async (req, res) => {
                 `
             });
 
-            return res.status(201).json({message: "Admin successfully added. Password setup email sent."});
+            return res.status(201).json({ message: "Admin successfully added. Password setup email sent." });
         } catch (emailError) {
             console.error("Error sending email:", emailError);
             // Admin was added but email failed - return partial success
@@ -111,51 +107,42 @@ const addAdmin = async (req, res) => {
         }
     } catch (err) {
         console.error("Error adding admin details:", err);
-        return res.status(500).json({message: "Error adding admin details", error: err.message});
-    } 
+        return res.status(500).json({ message: "Error adding admin details", error: err.message });
+    }
 };
 
 
 const setPassword = async (req, res) => {
     try {
         const token = req.query.token;
-        
+        const { password, confirmPassword } = req.body;
+
         if (!token) {
-            return res.status(400).json({message: "Token is required"});
+            return res.status(400).json({ message: "Token is required" });
         }
+
         
-        const {password, confirmPassword} = req.body;
-        
-        if (!password || !confirmPassword) {
-            return res.status(400).json({message: "Password and confirmation are required"});
-        }
-        
-        // Validate password strength
-        if (password.length < 8) {
-            return res.status(400).json({message: "Password must be at least 8 characters long"});
-        }
-        
-        
+
         let decoded;
         try {
-            decoded = jwt.verify(token, process.env.JWT_SECRET);
+            decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
         } catch (error) {
             if (error.name === 'TokenExpiredError') {
-                return res.status(401).json({message: "Password setup link has expired"});
+                return res.status(401).json({ message: "Password setup link has expired" });
             }
-            return res.status(401).json({message: "Invalid token"});
+            return res.status(401).json({ message: "Invalid token" });
         }
 
         if (decoded.role !== "admin") {
-            return res.status(403).json({message: "Access denied"});
+            return res.status(403).json({ message: "Access denied" });
         }
 
-       
+
         if (password !== confirmPassword) {
-            return res.status(400).json({message: "Passwords do not match"});
+            return res.status(400).json({ message: "Passwords do not match" });
         }
 
-        
+
         const hashPassword = await bcrypt.hash(password, 10);
 
         const query = {
@@ -166,14 +153,14 @@ const setPassword = async (req, res) => {
         const result = await pool.query(query);
 
         if (result.rows.length === 0) {
-            return res.status(404).json({message: "Admin not found"});
+            return res.status(404).json({ message: "Admin not found" });
         }
 
-        return res.status(200).json({message: "Password successfully set", user: result.rows[0]});
+        return res.status(200).json({ message: "Password successfully set", user: result.rows[0] });
     } catch (error) {
         console.error(`Error setting password: ${error}`);
-        return res.status(500).json({message: "Internal Server Error", error: error.message});
+        return res.status(500).json({ message: "Internal Server Error", error: error.message });
     }
 };
 
-module.exports = {addAdmin, setPassword};
+module.exports = { addAdmin, setPassword };
