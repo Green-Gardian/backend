@@ -25,19 +25,16 @@ const generateTokens = (user) => {
 
 const signUp = async (req, res) => {
     try {
-        const { firstName, lastName , phone , role , email, password } = req.body;
+        const { firstName, lastName , phone , role , email } = req.body;
 
         const username = email.split('@')[0];
 
         const regex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 
-        
 
         if (!regex.test(email)) {
             return res.status(400).json({ message: "Invalid email address" });
         }
-
-        
 
         const query = {
             text: `SELECT * FROM users WHERE email = $1`,
@@ -50,13 +47,9 @@ const signUp = async (req, res) => {
             return res.status(400).json({ message: "Email already in use." });
         }
 
-        const saltRounds = 10;
-
-        const hashedPassword = await bcrypt.hash(password, saltRounds);
-
         let insertQuery = {
-            text: `INSERT INTO users (first_name,last_name,username, phone_number , email,role,password) values ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-            values: [firstName, lastName, username,phone ,email, role, hashedPassword]
+            text: `INSERT INTO users (first_name,last_name,username, phone_number , email,role) values ($1,$2,$3,$4,$5,$6) RETURNING *`,
+            values: [firstName, lastName, username,phone ,email, role]
         };
 
         const createdUser = await pool.query(insertQuery);
@@ -74,7 +67,7 @@ const signUp = async (req, res) => {
 
         await sendVerificationEmail(username, email, verificationToken);
 
-        return res.status(200).json({ message: `User created successfully`, })
+        return res.status(201).json({ message: `Admin created.Email sent to verify and set password.`, })
     }
     catch (error) {
         console.error(`Error creating user: ${error.message}`);
@@ -102,7 +95,7 @@ const signIn = async (req, res) => {
 
         const user = queryRes.rows[0];
 
-        const match = await bcrypt.compare(password, user.password);
+        const match = await bcrypt.compare(password, user.password_hash);
 
         if (!match) {
             return res.status(404).json({ message: "Invalid Password" });
@@ -161,8 +154,8 @@ const sendVerificationEmail = async (recipientUsername, recipientEmail, verifica
         <h1>Hello ${recipientUsername},</h1>
         <p>Thank you for signing up with Green Guardian! To complete your registration, please verify your email address.</p>
         <h2>Email Verification</h2>
-        <p>Please click the link below to verify your email:</p>
-        <a href="${verificationLink}">Verify Email</a>
+        <p>Please click the link below to verify your email and set your password:</p>
+        <a href="${verificationLink}">Verify Email and set password</a>
       `,
     };
 
@@ -176,13 +169,29 @@ const sendVerificationEmail = async (recipientUsername, recipientEmail, verifica
 };
 
 
-const verifyEmail = async (req,res) => {
+const verifyEmailAndSetPassword = async (req,res) => {
     try{
-
+        
         const token = req.query.token;
+        const {password , confirmPassword } = req.body;
 
         if (!token) {
             return res.status(400).json({ message: "Token is required" });
+        }
+
+        if(!password){
+            console.log(`Password field is required.`)
+            return res.status(400).json({message: `Password field is required.`});
+        }
+
+        if(!confirmPassword){
+            console.log(`Confirm Password field is required.`)
+            return res.status(400).json({message: `Confirm Password field is required.`});
+        }
+
+        if(password !== confirmPassword){
+            console.log(`Passwords donot match.`)
+            return res.status(400).json({message: `Passwords donot match.`});
         }
 
         const tokenQuery = await pool.query(`
@@ -206,9 +215,20 @@ const verifyEmail = async (req,res) => {
         }
 
         const verified = tokenQuery.rows[0];
-        console.log(verified.user_id)
         
         const client = await pool.connect();
+
+        const saltRounds = 10;
+        const hashedPassword = await bcrypt.hash(password,saltRounds);
+        
+        const updatePassword = await pool.query(`UPDATE users SET password_hash = $1 WHERE id = $2 RETURNING *`,
+            [hashedPassword,verified.user_id]
+        )
+
+        if(updatePassword.rows.length === 0){
+            console.log(`Error updating password.`);
+            return res.status.json({message: `Error updating password.`})
+        }
 
         try{
             await client.query(`BEGIN`);
@@ -221,7 +241,9 @@ const verifyEmail = async (req,res) => {
 
             await client.query(`COMMIT`)
 
-            return res.status(200).json({message: `Email successfully Verified`})
+            
+
+            return res.status(200).json({message: `Email successfully Verified and password is set. You can now log in. `})
         }
         catch(error){
             await client.query(`ROLLBACK`);
@@ -229,8 +251,8 @@ const verifyEmail = async (req,res) => {
         }
         finally{
             await client.release();
-        }
-    }
+        }  
+    } 
     catch(error){
         console.log(`Email Verification Failed`);
         return res.status(500).json({message: `Email Verification Failed`, error: error.message})
@@ -259,5 +281,5 @@ const refreshToken = (req, res) => {
     }
 }
 
-module.exports = { refreshToken, signIn, signUp , verifyEmail};
+module.exports = { refreshToken, signIn, signUp , verifyEmailAndSetPassword};
 
