@@ -85,6 +85,9 @@ const signUp = async (req, res) => {
 const signIn = async (req, res) => {
     const { email, password } = req.body;
 
+    console.log('email : ',email)
+    console.log('password : ',password)
+
     try {
         const query = {
             text: `SELECT * FROM users WHERE email = $1`,
