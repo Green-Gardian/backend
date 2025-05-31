@@ -29,7 +29,7 @@ const initDb = async () => {
                 username VARCHAR(255) UNIQUE NOT NULL,
                 phone_number VARCHAR(15) UNIQUE NOT NULL,
                 email VARCHAR(255) UNIQUE NOT NULL,
-                password TEXT NOT NULL,
+                password_hash TEXT,
                 role VARCHAR(50) NOT NULL CHECK (role IN ('driver', 'customer-support' , 'admin', 'super_admin')),
                 is_verified BOOLEAN DEFAULT FALSE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
