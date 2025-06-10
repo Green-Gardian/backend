@@ -52,8 +52,10 @@ const initDb = async () => {
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
                 driver_name TEXT,
-                plate_no INTEGER NOT NULL,
-                status TEXT NOT NULL
+                plate_no VARCHAR(20) NOT NULL UNIQUE,
+                status TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             `);
 

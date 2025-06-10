@@ -4,7 +4,8 @@ const { pool } = require("../config/db")
 require("dotenv").config();
 const crypto = require("crypto");
 const nodemailer = require("nodemailer");
-const { google } = require("googleapis")
+const { google } = require("googleapis");
+const { verifyToken } = require("../middlewares/authMiddleware");
 
 const generateTokens = (user) => {
     try {
