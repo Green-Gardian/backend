@@ -4,28 +4,36 @@ const { pool } = require("../config/db")
 require("dotenv").config();
 const crypto = require("crypto");
 const nodemailer = require("nodemailer");
-const {google} = require("googleapis")
+const { google } = require("googleapis");
+const { verifyToken } = require("../middlewares/authMiddleware");
 
 const generateTokens = (user) => {
     try {
-        const access_token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_ACCESS_SECRET, {
-            expiresIn: process.env.JWT_ACCESS_EXPIRY
-        });
+        const access_token = jwt.sign(
+            { id: user.id, role: user.role },
+            process.env.JWT_ACCESS_SECRET,
+            { expiresIn: process.env.JWT_ACCESS_EXPIRY }
+        );
 
-        const refresh_token = jwt.sign({ id: user.id }, process.env.JWT_REFRESH_SECRET, {
-            expiresIn: process.env.JWT_REFRESH_EXPIRY
-        });
+        const refresh_token = jwt.sign(
+            { id: user.id },
+            process.env.JWT_REFRESH_SECRET,
+            { expiresIn: process.env.JWT_REFRESH_EXPIRY }
+        );
 
         return { access_token, refresh_token }
     }
     catch (error) {
         console.log(`ERROR: Generating access and refresh token: ${error}`)
+        throw error; // Re-throw to handle in calling function
     }
 }
 
-const addAdmin = async (req, res) => {
+module.exports = { verifyToken, generateTokens };
+
+const signUp = async (req, res) => {
     try {
-        const { firstName, lastName , phone , role , email } = req.body;
+        const { firstName, lastName, phone, role, email, password } = req.body;
 
         const username = email.split('@')[0];
 
@@ -35,6 +43,8 @@ const addAdmin = async (req, res) => {
         if (!regex.test(email)) {
             return res.status(400).json({ message: "Invalid email address" });
         }
+
+
 
         const query = {
             text: `SELECT * FROM users WHERE email = $1`,
@@ -48,8 +58,8 @@ const addAdmin = async (req, res) => {
         }
 
         let insertQuery = {
-            text: `INSERT INTO users (first_name,last_name,username, phone_number , email,role) values ($1,$2,$3,$4,$5,$6) RETURNING *`,
-            values: [firstName, lastName, username,phone ,email, role]
+            text: `INSERT INTO users (first_name,last_name,username, phone_number , email,role,password) values ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+            values: [firstName, lastName, username, phone, email, role, hashedPassword]
         };
 
         const createdUser = await pool.query(insertQuery);
@@ -103,7 +113,7 @@ const signIn = async (req, res) => {
 
         const tokens = generateTokens(user);
 
-        return res.status(200).json({ message: "User logged in successfully", ...tokens, username: user.username , is_verified: user.is_verified});
+        return res.status(200).json({ message: "User logged in successfully", ...tokens, username: user.username, is_verified: user.is_verified });
     }
     catch (error) {
         return res.status(500).json({ message: `Unable to sign in` });
@@ -111,67 +121,67 @@ const signIn = async (req, res) => {
 }
 
 const sendVerificationEmail = async (recipientUsername, recipientEmail, verificationToken) => {
-  console.log(`Verification Token: ${verificationToken}`);
+    console.log(`Verification Token: ${verificationToken}`);
 
-  const verificationLink = `http://localhost:3001/auth/verify-email?token=${verificationToken}`;
+    const verificationLink = `http://localhost:3001/auth/verify-email?token=${verificationToken}`;
 
-  const OAuth2 = google.auth.OAuth2;
-  const oauth2Client = new OAuth2(
-    process.env.OAUTH_CLIENT_ID,
-    process.env.OAUTH_CLIENT_SECRET,
-    "https://developers.google.com/oauthplayground"
-  );
+    const OAuth2 = google.auth.OAuth2;
+    const oauth2Client = new OAuth2(
+        process.env.OAUTH_CLIENT_ID,
+        process.env.OAUTH_CLIENT_SECRET,
+        "https://developers.google.com/oauthplayground"
+    );
 
-  oauth2Client.setCredentials({
-    refresh_token: process.env.OAUTH_REFRESH_TOKEN,
-  });
-
-  try {
-    const accessToken = await oauth2Client.getAccessToken();
-    const token = typeof accessToken === 'string' ? accessToken : accessToken?.token;
-
-    if (!token) {
-      throw new Error('Failed to retrieve access token');
-    }
-
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        type: 'OAuth2',
-        user: process.env.SENDER_EMAIL,
-        clientId: process.env.OAUTH_CLIENT_ID,
-        clientSecret: process.env.OAUTH_CLIENT_SECRET,
-        refreshToken: process.env.OAUTH_REFRESH_TOKEN,
-        accessToken: token,
-      },
+    oauth2Client.setCredentials({
+        refresh_token: process.env.OAUTH_REFRESH_TOKEN,
     });
 
-    const mailOptions = {
-      from: `Green Guardian <${process.env.SENDER_EMAIL}>`,
-      to: recipientEmail,
-      subject: 'Verify Your Email',
-      html: `
+    try {
+        const accessToken = await oauth2Client.getAccessToken();
+        const token = typeof accessToken === 'string' ? accessToken : accessToken?.token;
+
+        if (!token) {
+            throw new Error('Failed to retrieve access token');
+        }
+
+        const transporter = nodemailer.createTransport({
+            service: 'gmail',
+            auth: {
+                type: 'OAuth2',
+                user: process.env.SENDER_EMAIL,
+                clientId: process.env.OAUTH_CLIENT_ID,
+                clientSecret: process.env.OAUTH_CLIENT_SECRET,
+                refreshToken: process.env.OAUTH_REFRESH_TOKEN,
+                accessToken: token,
+            },
+        });
+
+        const mailOptions = {
+            from: `Green Guardian <${process.env.SENDER_EMAIL}>`,
+            to: recipientEmail,
+            subject: 'Verify Your Email',
+            html: `
         <h1>Hello ${recipientUsername},</h1>
         <p>Thank you for signing up with Green Guardian! To complete your registration, please verify your email address.</p>
         <h2>Email Verification</h2>
         <p>Please click the link below to verify your email and set your password:</p>
         <a href="${verificationLink}">Verify Email and set password</a>
       `,
-    };
+        };
 
-    const result = await transporter.sendMail(mailOptions);
-    console.log('Email sent:', result.response);
-    return result;
-  } catch (error) {
-    console.error('Error sending email:', error);
-    throw error;
-  }
+        const result = await transporter.sendMail(mailOptions);
+        console.log('Email sent:', result.response);
+        return result;
+    } catch (error) {
+        console.error('Error sending email:', error);
+        throw error;
+    }
 };
 
 
-const verifyEmailAndSetPassword = async (req,res) => {
-    try{
-        
+const verifyEmail = async (req, res) => {
+    try {
+
         const token = req.query.token;
         const {password , confirmPassword } = req.body;
 
@@ -202,35 +212,24 @@ const verifyEmailAndSetPassword = async (req,res) => {
             `,
             [token]);
 
-        
 
-        if(tokenQuery.rows.length === 0){
+
+        if (tokenQuery.rows.length === 0) {
             console.log("Expired or invalid token");
-            return res.status(400).json({message: `Expired or invalid token`})
+            return res.status(400).json({ message: `Expired or invalid token` })
         }
 
-        if(tokenQuery.rows[0].is_verified === "TRUE"){
+        if (tokenQuery.rows[0].is_verified === "TRUE") {
             console.log(`Email Already verified.`);
-            return res.status(400).json({message: `Email Already verified.`})
+            return res.status(400).json({ message: `Email Already verified.` })
         }
 
-        const user = tokenQuery.rows[0];
-        
+        const verified = tokenQuery.rows[0];
+        console.log(verified.user_id)
+
         const client = await pool.connect();
 
-        const saltRounds = 10;
-        const hashedPassword = await bcrypt.hash(password,saltRounds);
-        
-        const updatePassword = await pool.query(`UPDATE users SET password_hash = $1 WHERE id = $2 RETURNING *`,
-            [hashedPassword,user.user_id]
-        )
-
-        if(updatePassword.rows.length === 0){
-            console.log(`Error updating password.`);
-            return res.status.json({message: `Error updating password.`})
-        }
-
-        try{
+        try {
             await client.query(`BEGIN`);
 
             await client.query(`UPDATE users SET is_verified = TRUE , updated_at = NOW() WHERE id = $1`,
@@ -241,24 +240,22 @@ const verifyEmailAndSetPassword = async (req,res) => {
 
             await client.query(`COMMIT`)
 
-            
-
-            return res.status(200).json({message: `Email successfully Verified and password is set. You can now log in. `})
+            return res.status(200).json({ message: `Email successfully Verified` })
         }
-        catch(error){
+        catch (error) {
             await client.query(`ROLLBACK`);
             throw error
         }
-        finally{
+        finally {
             await client.release();
-        }  
-    } 
-    catch(error){
+        }
+    }
+    catch (error) {
         console.log(`Email Verification Failed`);
-        return res.status(500).json({message: `Email Verification Failed`, error: error.message})
+        return res.status(500).json({ message: `Email Verification Failed`, error: error.message })
     }
 
-    
+
 }
 
 const refreshToken = (req, res) => {
@@ -281,5 +278,5 @@ const refreshToken = (req, res) => {
     }
 }
 
-module.exports = { refreshToken, signIn, addAdmin , verifyEmailAndSetPassword};
+module.exports = { refreshToken, signIn, signUp, verifyEmail };
 

@@ -38,6 +38,21 @@ const initDb = async () => {
             );
             `);
 
+<<<<<<< HEAD
+=======
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS vehicle (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                driver_name TEXT,
+                plate_no VARCHAR(20) NOT NULL UNIQUE,
+                status TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            `);
+
+>>>>>>> ukasha
         console.log("Database initialized.")
     }
     catch (error) {
