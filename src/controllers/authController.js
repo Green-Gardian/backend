@@ -8,7 +8,7 @@ const {google} = require("googleapis")
 
 const generateTokens = (user) => {
     try {
-        const access_token = jwt.sign({ id: user.id, role: "admin" }, process.env.JWT_ACCESS_SECRET, {
+        const access_token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_ACCESS_SECRET, {
             expiresIn: process.env.JWT_ACCESS_EXPIRY
         });
 
@@ -23,7 +23,7 @@ const generateTokens = (user) => {
     }
 }
 
-const signUp = async (req, res) => {
+const addAdmin = async (req, res) => {
     try {
         const { firstName, lastName , phone , role , email } = req.body;
 
@@ -103,7 +103,7 @@ const signIn = async (req, res) => {
 
         const tokens = generateTokens(user);
 
-        return res.status(200).json({ message: "User logged in successfully", ...tokens, username: user.username , is_verified: user.is_verified });
+        return res.status(200).json({ message: "User logged in successfully", ...tokens, username: user.username , is_verified: user.is_verified});
     }
     catch (error) {
         return res.status(500).json({ message: `Unable to sign in` });
@@ -214,7 +214,7 @@ const verifyEmailAndSetPassword = async (req,res) => {
             return res.status(400).json({message: `Email Already verified.`})
         }
 
-        const verified = tokenQuery.rows[0];
+        const user = tokenQuery.rows[0];
         
         const client = await pool.connect();
 
@@ -222,7 +222,7 @@ const verifyEmailAndSetPassword = async (req,res) => {
         const hashedPassword = await bcrypt.hash(password,saltRounds);
         
         const updatePassword = await pool.query(`UPDATE users SET password_hash = $1 WHERE id = $2 RETURNING *`,
-            [hashedPassword,verified.user_id]
+            [hashedPassword,user.user_id]
         )
 
         if(updatePassword.rows.length === 0){
@@ -234,7 +234,7 @@ const verifyEmailAndSetPassword = async (req,res) => {
             await client.query(`BEGIN`);
 
             await client.query(`UPDATE users SET is_verified = TRUE , updated_at = NOW() WHERE id = $1`,
-                [verified.user_id]);
+                [user.user_id]);
 
             await client.query(`UPDATE email_verification_tokens SET is_used = TRUE WHERE token = $1`,
                 [token]);
@@ -262,8 +262,8 @@ const verifyEmailAndSetPassword = async (req,res) => {
 }
 
 const refreshToken = (req, res) => {
-    const { refresh_token } = req.body;
     try {
+        const { refresh_token } = req.body;
         if (!refresh_token) return res.status(401).json({ message: 'Refresh token required' });
 
 
@@ -277,9 +277,9 @@ const refreshToken = (req, res) => {
         return res.status(200).json({ access_token })
     }
     catch (err) {
-        return res.status(500).json({ error: err });
+        return res.status(500).json({ error: err.message });
     }
 }
 
-module.exports = { refreshToken, signIn, signUp , verifyEmailAndSetPassword};
+module.exports = { refreshToken, signIn, addAdmin , verifyEmailAndSetPassword};
 

@@ -18,7 +18,6 @@ initDb();
 
 app.use(express.json());
 app.use("/auth",authRouter);
-app.use("/user",verifyToken,userRouter)
 
 app.listen(PORT,()=>{
     console.log(`Server is running on PORT:${PORT}`)
