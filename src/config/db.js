@@ -38,8 +38,6 @@ const initDb = async () => {
             );
             `);
 
-<<<<<<< HEAD
-=======
         await pool.query(`
             CREATE TABLE IF NOT EXISTS vehicle (
                 id SERIAL PRIMARY KEY,
@@ -52,7 +50,6 @@ const initDb = async () => {
             );
             `);
 
->>>>>>> ukasha
         console.log("Database initialized.")
     }
     catch (error) {
