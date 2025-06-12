@@ -4,36 +4,28 @@ const { pool } = require("../config/db")
 require("dotenv").config();
 const crypto = require("crypto");
 const nodemailer = require("nodemailer");
-const { google } = require("googleapis");
-const { verifyToken } = require("../middlewares/authMiddleware");
+const { google } = require("googleapis")
 
 const generateTokens = (user) => {
     try {
-        const access_token = jwt.sign(
-            { id: user.id, role: user.role },
-            process.env.JWT_ACCESS_SECRET,
-            { expiresIn: process.env.JWT_ACCESS_EXPIRY }
-        );
+        const access_token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_ACCESS_SECRET, {
+            expiresIn: process.env.JWT_ACCESS_EXPIRY
+        });
 
-        const refresh_token = jwt.sign(
-            { id: user.id },
-            process.env.JWT_REFRESH_SECRET,
-            { expiresIn: process.env.JWT_REFRESH_EXPIRY }
-        );
+        const refresh_token = jwt.sign({ id: user.id }, process.env.JWT_REFRESH_SECRET, {
+            expiresIn: process.env.JWT_REFRESH_EXPIRY
+        });
 
         return { access_token, refresh_token }
     }
     catch (error) {
         console.log(`ERROR: Generating access and refresh token: ${error}`)
-        throw error; // Re-throw to handle in calling function
     }
 }
 
-module.exports = { verifyToken, generateTokens };
-
-const signUp = async (req, res) => {
+const addAdmin = async (req, res) => {
     try {
-        const { firstName, lastName, phone, role, email, password } = req.body;
+        const { firstName, lastName, phone, role, email } = req.body;
 
         const username = email.split('@')[0];
 
@@ -43,8 +35,6 @@ const signUp = async (req, res) => {
         if (!regex.test(email)) {
             return res.status(400).json({ message: "Invalid email address" });
         }
-
-
 
         const query = {
             text: `SELECT * FROM users WHERE email = $1`,
@@ -58,8 +48,8 @@ const signUp = async (req, res) => {
         }
 
         let insertQuery = {
-            text: `INSERT INTO users (first_name,last_name,username, phone_number , email,role,password) values ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-            values: [firstName, lastName, username, phone, email, role, hashedPassword]
+            text: `INSERT INTO users (first_name,last_name,username, phone_number , email,role) values ($1,$2,$3,$4,$5,$6) RETURNING *`,
+            values: [firstName, lastName, username, phone, email, role]
         };
 
         const createdUser = await pool.query(insertQuery);
@@ -87,9 +77,6 @@ const signUp = async (req, res) => {
 
 const signIn = async (req, res) => {
     const { email, password } = req.body;
-
-    console.log('email : ',email)
-    console.log('password : ',password)
 
     try {
         const query = {
@@ -179,29 +166,29 @@ const sendVerificationEmail = async (recipientUsername, recipientEmail, verifica
 };
 
 
-const verifyEmail = async (req, res) => {
+const verifyEmailAndSetPassword = async (req, res) => {
     try {
 
         const token = req.query.token;
-        const {password , confirmPassword } = req.body;
+        const { password, confirmPassword } = req.body;
 
         if (!token) {
             return res.status(400).json({ message: "Token is required" });
         }
 
-        if(!password){
+        if (!password) {
             console.log(`Password field is required.`)
-            return res.status(400).json({message: `Password field is required.`});
+            return res.status(400).json({ message: `Password field is required.` });
         }
 
-        if(!confirmPassword){
+        if (!confirmPassword) {
             console.log(`Confirm Password field is required.`)
-            return res.status(400).json({message: `Confirm Password field is required.`});
+            return res.status(400).json({ message: `Confirm Password field is required.` });
         }
 
-        if(password !== confirmPassword){
+        if (password !== confirmPassword) {
             console.log(`Passwords donot match.`)
-            return res.status(400).json({message: `Passwords donot match.`});
+            return res.status(400).json({ message: `Passwords donot match.` });
         }
 
         const tokenQuery = await pool.query(`
@@ -224,10 +211,21 @@ const verifyEmail = async (req, res) => {
             return res.status(400).json({ message: `Email Already verified.` })
         }
 
-        const verified = tokenQuery.rows[0];
-        console.log(verified.user_id)
+        const user = tokenQuery.rows[0];
 
         const client = await pool.connect();
+
+        const saltRounds = 10;
+        const hashedPassword = await bcrypt.hash(password, saltRounds);
+
+        const updatePassword = await pool.query(`UPDATE users SET password_hash = $1 WHERE id = $2 RETURNING *`,
+            [hashedPassword, user.user_id]
+        )
+
+        if (updatePassword.rows.length === 0) {
+            console.log(`Error updating password.`);
+            return res.status.json({ message: `Error updating password.` })
+        }
 
         try {
             await client.query(`BEGIN`);
@@ -240,7 +238,9 @@ const verifyEmail = async (req, res) => {
 
             await client.query(`COMMIT`)
 
-            return res.status(200).json({ message: `Email successfully Verified` })
+
+
+            return res.status(200).json({ message: `Email successfully Verified and password is set. You can now log in. ` })
         }
         catch (error) {
             await client.query(`ROLLBACK`);
@@ -278,5 +278,5 @@ const refreshToken = (req, res) => {
     }
 }
 
-module.exports = { refreshToken, signIn, signUp, verifyEmail };
+module.exports = { refreshToken, signIn, addAdmin, verifyEmailAndSetPassword };
 

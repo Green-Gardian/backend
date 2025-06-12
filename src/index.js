@@ -1,7 +1,6 @@
 const express = require("express");
 const app = express();
 const authRouter = require("./routes/authRoutes");
-const userRouter = require("./routes/userRoutes");
 const vehicleRouter = require("./routes/vehicleRoutes")
 const { verifyToken } = require("./middlewares/authMiddleware")
 const { initDb } = require("./config/db")
@@ -13,8 +12,7 @@ initDb();
 
 app.use(express.json());
 app.use("/auth", authRouter);
-app.use("/user", verifyToken, userRouter)
-app.use('/vehicle', verifyToken, vehicleRouter)
+app.use('/vehicle', verifyToken, vehicleRouter);
 
 app.listen(PORT, () => {
     console.log(`Server is running on PORT:${PORT}`)
