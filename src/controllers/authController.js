@@ -27,6 +27,10 @@ const addAdmin = async (req, res) => {
     try {
         const { firstName, lastName, phone, role, email } = req.body;
 
+        if(req.user.role !== "super_admin"){
+            return res.status(403).json({message: "Current role doesnot have privilege to create admin."})
+        }
+
         const username = email.split('@')[0];
 
         const regex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
