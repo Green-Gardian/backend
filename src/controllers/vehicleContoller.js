@@ -20,7 +20,40 @@ const addVehicle = async (req, res) => {
             });
         }
 
-        const userId = req.user.id;
+        let userId = null;
+        let finalDriverName = null;
+
+        if (driver_name && driver_name.trim() !== '') {
+            const driverQuery = `
+                SELECT id, first_name, last_name 
+                FROM users 
+                WHERE CONCAT(first_name, ' ', last_name) = $1 
+                   OR first_name = $1 
+                   OR last_name = $1
+                   OR LOWER(CONCAT(first_name, ' ', last_name)) = LOWER($1)
+                   OR LOWER(first_name) = LOWER($1)
+                   OR LOWER(last_name) = LOWER($1)
+            `;
+
+            const driverResult = await pool.query(driverQuery, [driver_name.trim()]);
+
+            if (driverResult.rows.length === 0) {
+                return res.status(404).json({
+                    message: "Driver not found in users table"
+                });
+            }
+
+            if (driverResult.rows.length > 1) {
+                return res.status(400).json({
+                    message: "Multiple drivers found with that name. Please be more specific."
+                });
+            }
+
+            const driver = driverResult.rows[0];
+            userId = driver.id;
+            finalDriverName = `${driver.first_name} ${driver.last_name}`;
+        }
+
 
         const insertQuery = `
             INSERT INTO vehicle (user_id, driver_name, plate_no, status) 
@@ -28,7 +61,7 @@ const addVehicle = async (req, res) => {
             RETURNING *
         `;
 
-        const result = await pool.query(insertQuery, [userId, driver_name, plat_no, status]);
+        const result = await pool.query(insertQuery, [userId, finalDriverName, plat_no, status]);
         const vehicleData = result.rows[0];
 
         console.log("Vehicle data saved:", vehicleData);
@@ -98,7 +131,6 @@ const updateVehicle = async (req, res) => {
         console.log(id);
         const { plat_no, status, driver_name } = req.body;
         const userRole = req.user.role;
-        const userId = req.user.id;
 
         if (!id) {
             return res.status(400).json({
@@ -138,13 +170,50 @@ const updateVehicle = async (req, res) => {
         }
 
         if (driver_name !== undefined) {
+            let driverUserId = null;
+            let finalDriverName = null;
+
+            if (driver_name && driver_name.trim() !== '') {
+                const driverQuery = `
+                    SELECT id, first_name, last_name 
+                    FROM users 
+                    WHERE CONCAT(first_name, ' ', last_name) = $${paramCounter}
+                       OR first_name = $${paramCounter}
+                       OR last_name = $${paramCounter}
+                       OR LOWER(CONCAT(first_name, ' ', last_name)) = LOWER($${paramCounter})
+                       OR LOWER(first_name) = LOWER($${paramCounter})
+                       OR LOWER(last_name) = LOWER($${paramCounter})
+                `;
+
+                const driverResult = await pool.query(driverQuery, [driver_name.trim()]);
+
+                if (driverResult.rows.length === 0) {
+                    return res.status(404).json({
+                        message: "Driver not found in users table"
+                    });
+                }
+
+                if (driverResult.rows.length > 1) {
+                    return res.status(400).json({
+                        message: "Multiple drivers found with that name. Please be more specific."
+                    });
+                }
+
+                const driver = driverResult.rows[0];
+                driverUserId = driver.id;
+                finalDriverName = `${driver.first_name} ${driver.last_name}`;
+            }
+
+            updateFields.push(`user_id = $${paramCounter}`);
+            updateValues.push(driverUserId);
+            paramCounter++;
+
             updateFields.push(`driver_name = $${paramCounter}`);
-            updateValues.push(driver_name);
+            updateValues.push(finalDriverName);
             paramCounter++;
         }
 
         updateFields.push(`updated_at = CURRENT_TIMESTAMP`);
-
         updateValues.push(id);
 
         if (updateFields.length === 1) {
