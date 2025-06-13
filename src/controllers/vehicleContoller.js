@@ -2,7 +2,7 @@ const { pool } = require("../config/db");
 
 const addVehicle = async (req, res) => {
     try {
-        const { plat_no, status, driver_name } = req.body;
+        const { plateNo, status, driverName } = req.body;
 
         const userRole = req.user.role;
 
@@ -14,7 +14,7 @@ const addVehicle = async (req, res) => {
             });
         }
 
-        if (!plat_no || !status) {
+        if (!plateNo || !status) {
             return res.status(400).json({
                 message: "Plate number and status are required"
             });
@@ -23,7 +23,7 @@ const addVehicle = async (req, res) => {
         let userId = null;
         let finalDriverName = null;
 
-        if (driver_name && driver_name.trim() !== '') {
+        if (driverName && driverName.trim() !== '') {
             const driverQuery = `
                 SELECT id, first_name, last_name 
                 FROM users 
@@ -35,7 +35,7 @@ const addVehicle = async (req, res) => {
                    OR LOWER(last_name) = LOWER($1)
             `;
 
-            const driverResult = await pool.query(driverQuery, [driver_name.trim()]);
+            const driverResult = await pool.query(driverQuery, [driverName.trim()]);
 
             if (driverResult.rows.length === 0) {
                 return res.status(404).json({
@@ -61,7 +61,7 @@ const addVehicle = async (req, res) => {
             RETURNING *
         `;
 
-        const result = await pool.query(insertQuery, [userId, finalDriverName, plat_no, status]);
+        const result = await pool.query(insertQuery, [userId, finalDriverName, plateNo, status]);
         const vehicleData = result.rows[0];
 
         console.log("Vehicle data saved:", vehicleData);
@@ -129,7 +129,7 @@ const updateVehicle = async (req, res) => {
     try {
         const { id } = req.params;
         console.log(id);
-        const { plat_no, status, driver_name } = req.body;
+        const { plateNo, status, driverName } = req.body;
         const userRole = req.user.role;
 
         if (!id) {
@@ -157,9 +157,9 @@ const updateVehicle = async (req, res) => {
         const updateValues = [];
         let paramCounter = 1;
 
-        if (plat_no !== undefined) {
+        if (plateNo !== undefined) {
             updateFields.push(`plate_no = $${paramCounter}`);
-            updateValues.push(plat_no);
+            updateValues.push(plateNo);
             paramCounter++;
         }
 
@@ -169,11 +169,11 @@ const updateVehicle = async (req, res) => {
             paramCounter++;
         }
 
-        if (driver_name !== undefined) {
+        if (driverName !== undefined) {
             let driverUserId = null;
             let finalDriverName = null;
 
-            if (driver_name && driver_name.trim() !== '') {
+            if (driverName && driverName.trim() !== '') {
                 const driverQuery = `
                     SELECT id, first_name, last_name 
                     FROM users 
@@ -185,7 +185,7 @@ const updateVehicle = async (req, res) => {
                        OR LOWER(last_name) = LOWER($${paramCounter})
                 `;
 
-                const driverResult = await pool.query(driverQuery, [driver_name.trim()]);
+                const driverResult = await pool.query(driverQuery, [driverName.trim()]);
 
                 if (driverResult.rows.length === 0) {
                     return res.status(404).json({
