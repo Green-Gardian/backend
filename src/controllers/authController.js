@@ -103,10 +103,32 @@ const signIn = async (req, res) => {
 
         const tokens = generateTokens(user);
 
+        await pool.query(`INSERT INTO refresh_tokens (user_id, token, created_at) VALUES ($1, $2, CURRENT_TIMESTAMP)
+        `, [user.id, tokens.refresh_token]);
+
         return res.status(200).json({ message: "User logged in successfully", ...tokens, username: user.username, is_verified: user.is_verified });
     }
     catch (error) {
         return res.status(500).json({ message: `Unable to sign in` });
+    }
+}
+
+const signOut = async (req, res) => {
+    try {
+        const { refresh_token } = req.body;
+
+        if (!refresh_token) {
+            return res.status(400).json({ message: "Refresh token is required" });
+        }
+
+        await pool.query(`
+            DELETE FROM refresh_tokens WHERE token = $1
+        `, [refresh_token]);
+
+        return res.status(200).json({ message: "User signed out successfully" });
+    }
+    catch (error) {
+        return res.status(500).json({ message: `Unable to sign out` });
     }
 }
 
@@ -281,5 +303,17 @@ const refreshToken = (req, res) => {
     }
 }
 
-module.exports = { refreshToken, signIn, addAdminandStaff, verifyEmailAndSetPassword };
+const listAdmins = async (req, res) => {
+    try {
+        const result = await pool.query(`SELECT * FROM users WHERE role = 'admin'`);
+        return res.status(200).json({
+            admins: result.rows
+        });
+    } catch (error) {
+        console.error("Error fetching admins:", error);
+        return res.status(500).json({message: "Internal server error."});
+    }
+}
+
+module.exports = { refreshToken, signIn, signOut , addAdminandStaff, verifyEmailAndSetPassword, listAdmins };
 
