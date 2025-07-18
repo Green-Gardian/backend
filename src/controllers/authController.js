@@ -23,12 +23,11 @@ const generateTokens = (user) => {
     }
 }
 
-const addAdmin = async (req, res) => {
+const addAdminandStaff = async (req, res) => {
     try {
         const { firstName, lastName, phone, role, email } = req.body;
-
-        if(req.user.role !== "super_admin"){
-            return res.status(403).json({message: "Current role doesnot have privilege to create admin."})
+        if (!firstName || !lastName || !phone || !role || !email) {
+            return res.status(400).json({ message: "All fields are required" });
         }
 
         const username = email.split('@')[0];
@@ -71,7 +70,7 @@ const addAdmin = async (req, res) => {
 
         await sendVerificationEmail(username, email, verificationToken);
 
-        return res.status(201).json({ message: `Admin created.Email sent to verify and set password.`, })
+        return res.status(201).json({ message: `Staff created. Email sent to verify and set password.`, })
     }
     catch (error) {
         console.error(`Error creating user: ${error.message}`);
@@ -282,5 +281,5 @@ const refreshToken = (req, res) => {
     }
 }
 
-module.exports = { refreshToken, signIn, addAdmin, verifyEmailAndSetPassword };
+module.exports = { refreshToken, signIn, addAdminandStaff, verifyEmailAndSetPassword };
 
