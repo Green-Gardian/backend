@@ -23,7 +23,7 @@ const generateTokens = (user) => {
     }
 }
 
-const addAdminandStaff = async (req, res) => {
+const addAdminAndStaff = async (req, res) => {
     try {
         const { firstName, lastName, phone, role, email } = req.body;
         if (!firstName || !lastName || !phone || !role || !email) {
@@ -330,5 +330,5 @@ const refreshToken = (req, res) => {
     }
 }
 
-module.exports = { refreshToken, signIn, addAdminandStaff, verifyEmailAndSetPassword };
+module.exports = { refreshToken, signIn, addAdminAndStaff, verifyEmailAndSetPassword };
 
