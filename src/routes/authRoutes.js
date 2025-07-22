@@ -5,7 +5,7 @@ const { verifyToken } = require("../middlewares/authMiddleware")
 
 
 const verifySuperAdmin = (req, res, next) => {
-    if(req.user && req.user.role === 'super_admin') {
+    if( req.user.role === 'super_admin') {
         next();
     }   
     else {
@@ -18,5 +18,6 @@ router.post("/sign-in", signIn);
 router.post("/add-admin", verifyToken, verifySuperAdmin, addAdminandStaff);
 router.post("/refresh-token", verifyToken, refreshToken);
 router.post("/verify-email", verifyEmailAndSetPassword);
+
 
 module.exports = router;
