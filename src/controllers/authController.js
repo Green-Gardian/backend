@@ -4,7 +4,7 @@ const { pool } = require("../config/db")
 require("dotenv").config();
 const crypto = require("crypto");
 const nodemailer = require("nodemailer");
-const { google } = require("googleapis")
+const { google } = require("googleapis");
 
 const generateTokens = (user) => {
     try {
@@ -48,6 +48,17 @@ const addAdminandStaff = async (req, res) => {
 
         if (resultUser.rows.length !== 0) {
             return res.status(400).json({ message: "Email already in use." });
+        }
+
+        const phoneQuery = {
+            text: `SELECT * FROM users WHERE phone_number = $1`,
+            values: [phone]
+        }
+
+        const User = await pool.query(phoneQuery)
+
+        if (User.rows.length !== 0) {
+            return res.status(400).json({ message: 'Phone Number already in user.'})
         }
 
         let insertQuery = {
@@ -96,12 +107,13 @@ const signIn = async (req, res) => {
         const user = queryRes.rows[0];
 
         const match = await bcrypt.compare(password, user.password_hash);
-
         if (!match) {
             return res.status(404).json({ message: "Invalid Password" });
         }
 
         const tokens = generateTokens(user);
+
+        console.log(tokens)
 
         return res.status(200).json({ message: "User logged in successfully", ...tokens, username: user.username, is_verified: user.is_verified });
     }
@@ -110,55 +122,92 @@ const signIn = async (req, res) => {
     }
 }
 
+// const sendVerificationEmail = async (recipientUsername, recipientEmail, verificationToken) => {
+//     console.log(`Verification Token: ${verificationToken}`);
+
+//     const verificationLink = `http://localhost:3001/auth/verify-email?token=${verificationToken}`;
+
+//     const OAuth2 = google.auth.OAuth2;
+//     const oauth2Client = new OAuth2(
+//         process.env.OAUTH_CLIENT_ID,
+//         process.env.OAUTH_CLIENT_SECRET,
+//         "https://developers.google.com/oauthplayground"
+//     );
+
+//     oauth2Client.setCredentials({
+//         refresh_token: process.env.OAUTH_REFRESH_TOKEN,
+//     });
+
+//     try {
+//         const accessToken = await oauth2Client.getAccessToken();
+//         const token = typeof accessToken === 'string' ? accessToken : accessToken?.token;
+
+//         if (!token) {
+//             throw new Error('Failed to retrieve access token');
+//         }
+
+//         const transporter = nodemailer.createTransport({
+//             service: 'gmail',
+//             auth: {
+//                 type: 'OAuth2',
+//                 user: process.env.SENDER_EMAIL,
+//                 clientId: process.env.OAUTH_CLIENT_ID,
+//                 clientSecret: process.env.OAUTH_CLIENT_SECRET,
+//                 refreshToken: process.env.OAUTH_REFRESH_TOKEN,
+//                 accessToken: token,
+//             },
+//         });
+
+//         const mailOptions = {
+//             from: `Green Guardian <${process.env.SENDER_EMAIL}>`,
+//             to: recipientEmail,
+//             subject: 'Verify Your Email',
+//             html: `
+//         <h1>Hello ${recipientUsername},</h1>
+//         <p>Thank you for signing up with Green Guardian! To complete your registration, please verify your email address.</p>
+//         <h2>Email Verification</h2>
+//         <p>Please click the link below to verify your email and set your password:</p>
+//         <a href="${verificationLink}">Verify Email and set password</a>
+//       `,
+//         };
+
+//         const result = await transporter.sendMail(mailOptions);
+//         console.log('Email sent:', result.response);
+//         return result;
+//     } catch (error) {
+//         console.error('Error sending email:', error);
+//         throw error;
+//     }
+// };
+
 const sendVerificationEmail = async (recipientUsername, recipientEmail, verificationToken) => {
     console.log(`Verification Token: ${verificationToken}`);
 
-    const verificationLink = `http://localhost:3001/auth/verify-email?token=${verificationToken}`;
+    const verificationLink = `http://localhost:5173/verify-email?token=${verificationToken}`;
 
-    const OAuth2 = google.auth.OAuth2;
-    const oauth2Client = new OAuth2(
-        process.env.OAUTH_CLIENT_ID,
-        process.env.OAUTH_CLIENT_SECRET,
-        "https://developers.google.com/oauthplayground"
-    );
-
-    oauth2Client.setCredentials({
-        refresh_token: process.env.OAUTH_REFRESH_TOKEN,
+    // Create transporter using SMTP and login credentials
+    const transporter = nodemailer.createTransport({
+        service: 'gmail', // or 'smtp.yourprovider.com'
+        auth: {
+            user: process.env.SENDER_EMAIL,
+            pass: process.env.SENDER_EMAIL_PASSWORD,
+        },
     });
 
+    const mailOptions = {
+        from: `Green Guardian <${process.env.SENDER_EMAIL}>`,
+        to: recipientEmail,
+        subject: 'Verify Your Email',
+        html: `
+            <h1>Hello ${recipientUsername},</h1>
+            <p>Thank you for signing up with Green Guardian! To complete your registration, please verify your email address.</p>
+            <h2>Email Verification</h2>
+            <p>Please click the link below to verify your email and set your password:</p>
+            <a href="${verificationLink}">Verify Email and set password</a>
+        `,
+    };
+
     try {
-        const accessToken = await oauth2Client.getAccessToken();
-        const token = typeof accessToken === 'string' ? accessToken : accessToken?.token;
-
-        if (!token) {
-            throw new Error('Failed to retrieve access token');
-        }
-
-        const transporter = nodemailer.createTransport({
-            service: 'gmail',
-            auth: {
-                type: 'OAuth2',
-                user: process.env.SENDER_EMAIL,
-                clientId: process.env.OAUTH_CLIENT_ID,
-                clientSecret: process.env.OAUTH_CLIENT_SECRET,
-                refreshToken: process.env.OAUTH_REFRESH_TOKEN,
-                accessToken: token,
-            },
-        });
-
-        const mailOptions = {
-            from: `Green Guardian <${process.env.SENDER_EMAIL}>`,
-            to: recipientEmail,
-            subject: 'Verify Your Email',
-            html: `
-        <h1>Hello ${recipientUsername},</h1>
-        <p>Thank you for signing up with Green Guardian! To complete your registration, please verify your email address.</p>
-        <h2>Email Verification</h2>
-        <p>Please click the link below to verify your email and set your password:</p>
-        <a href="${verificationLink}">Verify Email and set password</a>
-      `,
-        };
-
         const result = await transporter.sendMail(mailOptions);
         console.log('Email sent:', result.response);
         return result;
