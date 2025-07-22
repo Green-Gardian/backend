@@ -180,36 +180,128 @@ const signIn = async (req, res) => {
 //     }
 // };
 
+
 const sendVerificationEmail = async (recipientUsername, recipientEmail, verificationToken) => {
     console.log(`Verification Token: ${verificationToken}`);
 
-    const verificationLink = `http://localhost:5173/verify-email?token=${verificationToken}`;
-
-    // Create transporter using SMTP and login credentials
-    const transporter = nodemailer.createTransport({
-        service: 'gmail', // or 'smtp.yourprovider.com'
-        auth: {
-            user: process.env.SENDER_EMAIL,
-            pass: process.env.SENDER_EMAIL_PASSWORD,
-        },
-    });
-
-    const mailOptions = {
-        from: `Green Guardian <${process.env.SENDER_EMAIL}>`,
-        to: recipientEmail,
-        subject: 'Verify Your Email',
-        html: `
-            <h1>Hello ${recipientUsername},</h1>
-            <p>Thank you for signing up with Green Guardian! To complete your registration, please verify your email address.</p>
-            <h2>Email Verification</h2>
-            <p>Please click the link below to verify your email and set your password:</p>
-            <a href="${verificationLink}">Verify Email and set password</a>
-        `,
-    };
+    const verificationLink = `http://localhost:3001/auth/verify-email?token=${verificationToken}`;
 
     try {
+        // Create transporter with basic authentication
+        const transporter = nodemailer.createTransport({
+            service: 'gmail', // or your email service
+            auth: {
+                user: process.env.SENDER_EMAIL,
+                pass: process.env.SENDER_PASSWORD // App password for Gmail
+            },
+        });
+
+        const mailOptions = {
+            from: `Green Guardian <${process.env.SENDER_EMAIL}>`,
+            to: recipientEmail,
+            subject: '🌱 Welcome to Green Guardian - Verify Your Email',
+            html: `
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <title>Email Verification</title>
+                </head>
+                <body style="margin: 0; padding: 0; font-family: 'Arial', sans-serif; background-color: #f4f7f5;">
+                    <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; box-shadow: 0 4px 10px rgba(0,0,0,0.1);">
+                        
+                        <!-- Header -->
+                        <div style="background: linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%); padding: 40px 20px; text-align: center;">
+                            <div style="background-color: white; width: 80px; height: 80px; border-radius: 50%; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+                                <span style="font-size: 40px;">🌱</span>
+                            </div>
+                            <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: bold;">Green Guardian</h1>
+                            <p style="color: #e8f5e8; margin: 10px 0 0 0; font-size: 16px;">Your Environmental Journey Starts Here</p>
+                        </div>
+
+                        <!-- Content -->
+                        <div style="padding: 40px 30px;">
+                            <h2 style="color: #2E7D32; margin-bottom: 20px; font-size: 24px;">Hello ${recipientUsername}! 👋</h2>
+                            
+                            <p style="color: #555555; line-height: 1.6; font-size: 16px; margin-bottom: 25px;">
+                                Welcome to the Green Guardian community! We're excited to have you join us in making our planet a greener, more sustainable place.
+                            </p>
+
+                            <div style="background-color: #f8fff9; border-left: 4px solid #4CAF50; padding: 20px; margin: 25px 0; border-radius: 4px;">
+                                <h3 style="color: #2E7D32; margin: 0 0 15px 0; font-size: 18px;">📧 Verify Your Email Address</h3>
+                                <p style="color: #666666; margin: 0; line-height: 1.5;">
+                                    To complete your registration and start your eco-friendly journey, please verify your email address by clicking the button below.
+                                </p>
+                            </div>
+
+                            <!-- CTA Button -->
+                            <div style="text-align: center; margin: 35px 0;">
+                                <a href="${verificationLink}" 
+                                   style="background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%); 
+                                          color: #ffffff; 
+                                          text-decoration: none; 
+                                          padding: 15px 35px; 
+                                          border-radius: 50px; 
+                                          font-weight: bold; 
+                                          font-size: 16px; 
+                                          display: inline-block;
+                                          box-shadow: 0 4px 15px rgba(76, 175, 80, 0.3);
+                                          transition: all 0.3s ease;">
+                                    ✨ Verify Email & Set Password
+                                </a>
+                            </div>
+
+                            <div style="background-color: #fff3cd; border: 1px solid #ffeaa7; border-radius: 6px; padding: 15px; margin: 30px 0;">
+                                <p style="color: #856404; margin: 0; font-size: 14px; text-align: center;">
+                                    ⏰ This verification link will expire in 24 hours for security purposes.
+                                </p>
+                            </div>
+
+                            <div style="border-top: 1px solid #eeeeee; padding-top: 25px; margin-top: 30px;">
+                                <p style="color: #888888; font-size: 14px; line-height: 1.5; margin-bottom: 15px;">
+                                    If the button doesn't work, copy and paste this link into your browser:
+                                </p>
+                                <p style="background-color: #f8f9fa; padding: 10px; border-radius: 4px; word-break: break-all; font-size: 13px; color: #666666; margin: 0;">
+                                    ${verificationLink}
+                                </p>
+                            </div>
+                        </div>
+
+                        <!-- Footer -->
+                        <div style="background-color: #f8fff9; padding: 30px; text-align: center; border-top: 1px solid #e8f5e8;">
+                            <div style="margin-bottom: 20px;">
+                                <span style="font-size: 24px; margin: 0 5px;">🌍</span>
+                                <span style="font-size: 24px; margin: 0 5px;">🌿</span>
+                                <span style="font-size: 24px; margin: 0 5px;">♻️</span>
+                            </div>
+                            
+                            <p style="color: #2E7D32; margin: 0 0 10px 0; font-weight: bold; font-size: 16px;">
+                                Together, we can make a difference!
+                            </p>
+                            
+                            <p style="color: #666666; font-size: 14px; margin: 0 0 15px 0; line-height: 1.4;">
+                                Join thousands of eco-warriors already making positive environmental impact.
+                            </p>
+                            
+                            <p style="color: #888888; font-size: 12px; margin: 0;">
+                                This email was sent from Green Guardian. If you didn't create an account with us, please ignore this email.
+                            </p>
+                            
+                            <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e8f5e8;">
+                                <p style="color: #aaaaaa; font-size: 11px; margin: 0;">
+                                    © 2025 Green Guardian. All rights reserved.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </body>
+                </html>
+            `,
+        };
+
         const result = await transporter.sendMail(mailOptions);
-        console.log('Email sent:', result.response);
+        console.log('Email sent successfully:', result.response);
         return result;
     } catch (error) {
         console.error('Error sending email:', error);
