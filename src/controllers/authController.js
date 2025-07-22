@@ -113,7 +113,8 @@ const signIn = async (req, res) => {
 
         const tokens = generateTokens(user);
 
-        console.log(tokens)
+        await pool.query(`INSERT INTO refresh_tokens (user_id, token, created_at) VALUES ($1, $2, CURRENT_TIMESTAMP)
+        `, [user.id, tokens.refresh_token]);
 
         return res.status(200).json({ message: "User logged in successfully", ...tokens, username: user.username, is_verified: user.is_verified });
     }
@@ -122,64 +123,24 @@ const signIn = async (req, res) => {
     }
 }
 
-// const sendVerificationEmail = async (recipientUsername, recipientEmail, verificationToken) => {
-//     console.log(`Verification Token: ${verificationToken}`);
+const signOut = async (req, res) => {
+    try {
+        const { refresh_token } = req.body;
 
-//     const verificationLink = `http://localhost:3001/auth/verify-email?token=${verificationToken}`;
+        if (!refresh_token) {
+            return res.status(400).json({ message: "Refresh token is required" });
+        }
 
-//     const OAuth2 = google.auth.OAuth2;
-//     const oauth2Client = new OAuth2(
-//         process.env.OAUTH_CLIENT_ID,
-//         process.env.OAUTH_CLIENT_SECRET,
-//         "https://developers.google.com/oauthplayground"
-//     );
+        await pool.query(`
+            DELETE FROM refresh_tokens WHERE token = $1
+        `, [refresh_token]);
 
-//     oauth2Client.setCredentials({
-//         refresh_token: process.env.OAUTH_REFRESH_TOKEN,
-//     });
-
-//     try {
-//         const accessToken = await oauth2Client.getAccessToken();
-//         const token = typeof accessToken === 'string' ? accessToken : accessToken?.token;
-
-//         if (!token) {
-//             throw new Error('Failed to retrieve access token');
-//         }
-
-//         const transporter = nodemailer.createTransport({
-//             service: 'gmail',
-//             auth: {
-//                 type: 'OAuth2',
-//                 user: process.env.SENDER_EMAIL,
-//                 clientId: process.env.OAUTH_CLIENT_ID,
-//                 clientSecret: process.env.OAUTH_CLIENT_SECRET,
-//                 refreshToken: process.env.OAUTH_REFRESH_TOKEN,
-//                 accessToken: token,
-//             },
-//         });
-
-//         const mailOptions = {
-//             from: `Green Guardian <${process.env.SENDER_EMAIL}>`,
-//             to: recipientEmail,
-//             subject: 'Verify Your Email',
-//             html: `
-//         <h1>Hello ${recipientUsername},</h1>
-//         <p>Thank you for signing up with Green Guardian! To complete your registration, please verify your email address.</p>
-//         <h2>Email Verification</h2>
-//         <p>Please click the link below to verify your email and set your password:</p>
-//         <a href="${verificationLink}">Verify Email and set password</a>
-//       `,
-//         };
-
-//         const result = await transporter.sendMail(mailOptions);
-//         console.log('Email sent:', result.response);
-//         return result;
-//     } catch (error) {
-//         console.error('Error sending email:', error);
-//         throw error;
-//     }
-// };
-
+        return res.status(200).json({ message: "User signed out successfully" });
+    }
+    catch (error) {
+        return res.status(500).json({ message: `Unable to sign out` });
+    }
+}
 
 const sendVerificationEmail = async (recipientUsername, recipientEmail, verificationToken) => {
     console.log(`Verification Token: ${verificationToken}`);
@@ -422,5 +383,17 @@ const refreshToken = (req, res) => {
     }
 }
 
-module.exports = { refreshToken, signIn, addAdminAndStaff, verifyEmailAndSetPassword };
+const listAdmins = async (req, res) => {
+    try {
+        const result = await pool.query(`SELECT * FROM users WHERE role = 'admin'`);
+        return res.status(200).json({
+            admins: result.rows
+        });
+    } catch (error) {
+        console.error("Error fetching admins:", error);
+        return res.status(500).json({message: "Internal server error."});
+    }
+}
+
+module.exports = { refreshToken, signIn, signOut , addAdminandStaff, verifyEmailAndSetPassword, listAdmins };
 

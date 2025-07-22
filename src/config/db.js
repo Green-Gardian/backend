@@ -39,30 +39,48 @@ const initDb = async () => {
             `);
 
         await pool.query(`
-        CREATE TABLE IF NOT EXISTS super_admin (
-            id SERIAL PRIMARY KEY,
-            username VARCHAR(255) UNIQUE NOT NULL,
-            email VARCHAR(255) UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-    `);
+            CREATE TABLE IF NOT EXISTS societies (
+                id SERIAL PRIMARY KEY,
+                society_name TEXT NOT NULL,
+                address TEXT,
+                city VARCHAR(255),
+                state VARCHAR(255),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );`);
 
         await pool.query(`
-        CREATE TABLE IF NOT EXISTS admin (
-            id SERIAL PRIMARY KEY,
-            username VARCHAR(255) UNIQUE NOT NULL,
-            email VARCHAR(255) UNIQUE NOT NULL,
-            society_name TEXT,
-            society_address TEXT,
-            phone_number NUMERIC(12,0),
-            password TEXT,
-            is_verified BOOLEAN DEFAULT FALSE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        `);
+            CREATE TABLE IF NOT EXISTS society_admins (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                society_id INTEGER REFERENCES societies(id) ON DELETE CASCADE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );`);
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS society_license (
+                id SERIAL PRIMARY KEY,
+                society_id INTEGER REFERENCES societies(id) ON DELETE CASCADE,
+                license_key TEXT NOT NULL,
+                valid_from TIMESTAMP NOT NULL,
+                valid_until TIMESTAMP NOT NULL,
+                max_residents INTEGER NOT NULL,
+                max_drivers INTEGER NOT NULL,
+                max_bins INTEGER NOT NULL,
+                is_active BOOLEAN DEFAULT TRUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );`);
+
+	await pool.query(`
+            CREATE TABLE IF NOT EXISTS refresh_tokens (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                token TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );`);
+
 
         console.log("Database initialized.")
     }
