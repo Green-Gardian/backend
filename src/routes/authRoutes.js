@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const { signIn, listAdmins,  signOut, addAdminandStaff, refreshToken, verifyEmailAndSetPassword } = require("../controllers/authController")
+const { signIn, listAdmins,  signOut, addAdminAndStaff, refreshToken, verifyEmailAndSetPassword } = require("../controllers/authController")
 const { verifyToken } = require("../middlewares/authMiddleware")
 
 
@@ -15,7 +15,7 @@ const verifySuperAdmin = (req, res, next) => {
 router.post("/signout", verifyToken, signOut);
 router.get("/list-admins", verifyToken, verifySuperAdmin, listAdmins);
 router.post("/sign-in", signIn);
-router.post("/add-admin", verifyToken, verifySuperAdmin, addAdminandStaff);
+router.post("/add-admin", verifyToken, verifySuperAdmin, addAdminAndStaff);
 router.post("/refresh-token", verifyToken, refreshToken);
 router.post("/verify-email", verifyEmailAndSetPassword);
 

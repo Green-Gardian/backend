@@ -148,12 +148,11 @@ const sendVerificationEmail = async (recipientUsername, recipientEmail, verifica
     const verificationLink = `http://localhost:3001/auth/verify-email?token=${verificationToken}`;
 
     try {
-        // Create transporter with basic authentication
         const transporter = nodemailer.createTransport({
-            service: 'gmail', // or your email service
+            service: 'gmail', 
             auth: {
                 user: process.env.SENDER_EMAIL,
-                pass: process.env.SENDER_PASSWORD // App password for Gmail
+                pass: process.env.SENDER_PASSWORD 
             },
         });
 
@@ -395,5 +394,5 @@ const listAdmins = async (req, res) => {
     }
 }
 
-module.exports = { refreshToken, signIn, signOut , addAdminandStaff, verifyEmailAndSetPassword, listAdmins };
+module.exports = { refreshToken, signIn, signOut , addAdminAndStaff, verifyEmailAndSetPassword, listAdmins };
 
