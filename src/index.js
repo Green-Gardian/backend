@@ -1,9 +1,10 @@
 const express = require("express");
 const app = express();
 const authRouter = require("./routes/authRoutes");
-const vehicleRouter = require("./routes/vehicleRoutes")
+const vehicleRouter = require("./routes/vehicleRoutes");
 const societyRouter = require("./routes/societyRoutes");
 const licenseRouter = require("./routes/licenseRoutes");
+const driverRouter = require("./routes/driverRoutes");
 const { verifyToken } = require("./middlewares/authMiddleware")
 const { initDb } = require("./config/db")
 require("dotenv").config();
@@ -23,6 +24,7 @@ app.use("/auth", authRouter);
 app.use('/vehicle', verifyToken, vehicleRouter);
 app.use('/society', verifyToken, societyRouter);
 app.use('/license', verifyToken, licenseRouter);
+app.use('/driver', verifyToken, driverRouter)
 
 app.listen(PORT, () => {
     console.log(`Server is running on PORT:${PORT}`)

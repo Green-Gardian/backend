@@ -6,13 +6,6 @@ const addVehicle = async (req, res) => {
 
         const userRole = req.user.role;
 
-
-        if (userRole !== "admin" && userRole !== "super_admin") {
-            return res.status(403).json({
-                message: "User with this role is not allowed to add vehicle",
-            });
-        }
-
         if (!plateNo || !status) {
             return res.status(400).json({
                 message: "Plate number and status are required",
@@ -139,13 +132,7 @@ const updateVehicle = async (req, res) => {
                 message: "Vehicle not found",
             });
         }
-
-        if (userRole !== "admin" && userRole !== "super_admin") {
-            return res.status(403).json({
-                message: "You don't have permission to update vehicles",
-            });
-        }
-
+        
         const updateFields = [];
         const updateValues = [];
         let paramCounter = 1;
@@ -248,12 +235,6 @@ const deleteVehicle = async (req, res) => {
         if (!id) {
             return res.status(400).json({
                 message: "Vehicle ID is required",
-            });
-        }
-
-        if (userRole !== "admin" && userRole !== "super_admin") {
-            return res.status(403).json({
-                message: "You don't have permission to delete vehicles",
             });
         }
 

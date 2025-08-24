@@ -38,6 +38,18 @@ const initDb = async () => {
             );
             `);
 
+        // Add password reset tokens table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS password_reset_tokens (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                token TEXT NOT NULL,
+                is_used BOOLEAN DEFAULT FALSE,
+                expires_at TIMESTAMP NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            `);
+
         await pool.query(`
             CREATE TABLE IF NOT EXISTS societies (
                 id SERIAL PRIMARY KEY,
@@ -73,7 +85,7 @@ const initDb = async () => {
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );`);
 
-	await pool.query(`
+        await pool.query(`
             CREATE TABLE IF NOT EXISTS refresh_tokens (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
@@ -81,6 +93,15 @@ const initDb = async () => {
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );`);
 
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_token 
+            ON password_reset_tokens(token);
+            `);
+
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id 
+            ON password_reset_tokens(user_id);
+            `);
 
         console.log("Database initialized.")
     }

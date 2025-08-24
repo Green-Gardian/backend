@@ -20,4 +20,22 @@ const verifyToken = (req, res, next) => {
     }
 }
 
-module.exports = { verifyToken };
+const verifySuperAdmin = (req, res, next) => {
+    if( req.user.role === 'super_admin') {
+        next();
+    }   
+    else {
+        return res.status(403).json({ message: "Forbidden" });
+    }
+}
+
+const verifyAdminOrSuperAdmin = (req, res, next) => {
+    if (req.user.role === 'super_admin' || req.user.role === 'admin') {
+        next();
+    }
+    else {
+        return res.status(403).json({ message: "Forbidden"});
+    }
+}
+
+module.exports = { verifyToken, verifySuperAdmin, verifyAdminOrSuperAdmin};

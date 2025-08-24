@@ -394,5 +394,301 @@ const listAdmins = async (req, res) => {
     }
 }
 
-module.exports = { refreshToken, signIn, signOut , addAdminAndStaff, verifyEmailAndSetPassword, listAdmins };
+// Add these functions to your authController.js
 
+const changePassword = async (req, res) => {
+    try {
+        const { currentPassword, newPassword, confirmNewPassword } = req.body;
+        const userId = req.user.id; // From token verification middleware
+
+        if (!currentPassword || !newPassword || !confirmNewPassword) {
+            return res.status(400).json({ message: "All fields are required" });
+        }
+
+        if (newPassword !== confirmNewPassword) {
+            return res.status(400).json({ message: "New passwords do not match" });
+        }
+
+        if (newPassword.length < 6) {
+            return res.status(400).json({ message: "Password must be at least 6 characters long" });
+        }
+
+        // Get user's current password hash
+        const userQuery = await pool.query(`SELECT password_hash FROM users WHERE id = $1`, [userId]);
+        
+        if (userQuery.rows.length === 0) {
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        const user = userQuery.rows[0];
+
+        // Verify current password
+        const isCurrentPasswordValid = await bcrypt.compare(currentPassword, user.password_hash);
+        if (!isCurrentPasswordValid) {
+            return res.status(400).json({ message: "Current password is incorrect" });
+        }
+
+        // Hash new password
+        const saltRounds = 10;
+        const hashedNewPassword = await bcrypt.hash(newPassword, saltRounds);
+
+        // Update password in database
+        await pool.query(`UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2`, 
+            [hashedNewPassword, userId]);
+
+        return res.status(200).json({ message: "Password changed successfully" });
+
+    } catch (error) {
+        console.error(`Error changing password: ${error.message}`);
+        return res.status(500).json({ message: "Server Error" });
+    }
+};
+
+const forgotPassword = async (req, res) => {
+    try {
+        const { email } = req.body;
+
+        if (!email) {
+            return res.status(400).json({ message: "Email is required" });
+        }
+
+        const regex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+        if (!regex.test(email)) {
+            return res.status(400).json({ message: "Invalid email address" });
+        }
+
+        const userQuery = await pool.query(`SELECT id, username, email FROM users WHERE email = $1`, [email]);
+        
+        if (userQuery.rows.length === 0) {
+            return res.status(200).json({ message: "If the email exists, a password reset link has been sent" });
+        }
+
+        const user = userQuery.rows[0];
+
+        const resetToken = crypto.randomBytes(32).toString("hex");
+        const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour from now
+
+        await pool.query(`DELETE FROM password_reset_tokens WHERE user_id = $1`, [user.id]);
+
+        await pool.query(`
+            INSERT INTO password_reset_tokens (user_id, token, expires_at) 
+            VALUES ($1, $2, $3)`,
+            [user.id, resetToken, expiresAt]);
+
+        await sendPasswordResetEmail(user.username, user.email, resetToken);
+
+        return res.status(200).json({ message: "If the email exists, a password reset link has been sent" });
+
+    } catch (error) {
+        console.error(`Error in forgot password: ${error.message}`);
+        return res.status(500).json({ message: "Server Error" });
+    }
+};
+
+const resetPassword = async (req, res) => {
+    try {
+        const token = req.query.token;
+        const { newPassword, confirmPassword } = req.body;
+
+        if (!token) {
+            return res.status(400).json({ message: "Reset token is required" });
+        }
+
+        if (!newPassword || !confirmPassword) {
+            return res.status(400).json({ message: "All fields are required" });
+        }
+
+        if (newPassword !== confirmPassword) {
+            return res.status(400).json({ message: "Passwords do not match" });
+        }
+
+        if (newPassword.length < 6) {
+            return res.status(400).json({ message: "Password must be at least 6 characters long" });
+        }
+
+        // Verify token and get user
+        const tokenQuery = await pool.query(`
+            SELECT rt.*, u.id as user_id, u.email
+            FROM password_reset_tokens rt
+            JOIN users u ON rt.user_id = u.id
+            WHERE rt.token = $1 AND rt.is_used = FALSE AND rt.expires_at > NOW()`,
+            [token]);
+
+        if (tokenQuery.rows.length === 0) {
+            return res.status(400).json({ message: "Invalid or expired reset token" });
+        }
+
+        const resetTokenData = tokenQuery.rows[0];
+
+        const client = await pool.connect();
+
+        try {
+            await client.query('BEGIN');
+
+            // Hash new password
+            const saltRounds = 10;
+            const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
+
+            // Update user password
+            await client.query(`UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2`,
+                [hashedPassword, resetTokenData.user_id]);
+
+            // Mark token as used
+            await client.query(`UPDATE password_reset_tokens SET is_used = TRUE WHERE token = $1`,
+                [token]);
+
+            await client.query('COMMIT');
+
+            return res.status(200).json({ message: "Password reset successfully" });
+
+        } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        } finally {
+            client.release();
+        }
+
+    } catch (error) {
+        console.error(`Error resetting password: ${error.message}`);
+        return res.status(500).json({ message: "Server Error" });
+    }
+};
+
+const sendPasswordResetEmail = async (recipientUsername, recipientEmail, resetToken) => {
+    console.log(`Password Reset Token: ${resetToken}`);
+
+    const resetLink = `http://localhost:3001/auth/reset-password?token=${resetToken}`;
+
+    try {
+        const transporter = nodemailer.createTransport({
+            service: 'gmail',
+            auth: {
+                user: process.env.SENDER_EMAIL,
+                pass: process.env.SENDER_PASSWORD
+            },
+        });
+
+        const mailOptions = {
+            from: `Green Guardian <${process.env.SENDER_EMAIL}>`,
+            to: recipientEmail,
+            subject: '🔐 Green Guardian - Password Reset Request',
+            html: `
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <title>Password Reset</title>
+                </head>
+                <body style="margin: 0; padding: 0; font-family: 'Arial', sans-serif; background-color: #f4f7f5;">
+                    <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; box-shadow: 0 4px 10px rgba(0,0,0,0.1);">
+                        
+                        <!-- Header -->
+                        <div style="background: linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%); padding: 40px 20px; text-align: center;">
+                            <div style="background-color: white; width: 80px; height: 80px; border-radius: 50%; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+                                <span style="font-size: 40px;">🔐</span>
+                            </div>
+                            <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: bold;">Green Guardian</h1>
+                            <p style="color: #e8f5e8; margin: 10px 0 0 0; font-size: 16px;">Password Reset Request</p>
+                        </div>
+
+                        <!-- Content -->
+                        <div style="padding: 40px 30px;">
+                            <h2 style="color: #2E7D32; margin-bottom: 20px; font-size: 24px;">Hello ${recipientUsername}! 👋</h2>
+                            
+                            <p style="color: #555555; line-height: 1.6; font-size: 16px; margin-bottom: 25px;">
+                                We received a request to reset your password for your Green Guardian account. If you didn't make this request, you can safely ignore this email.
+                            </p>
+
+                            <div style="background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 20px; margin: 25px 0; border-radius: 4px;">
+                                <h3 style="color: #856404; margin: 0 0 15px 0; font-size: 18px;">🔒 Reset Your Password</h3>
+                                <p style="color: #856404; margin: 0; line-height: 1.5;">
+                                    Click the button below to create a new password for your account.
+                                </p>
+                            </div>
+
+                            <!-- CTA Button -->
+                            <div style="text-align: center; margin: 35px 0;">
+                                <a href="${resetLink}" 
+                                   style="background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%); 
+                                          color: #ffffff; 
+                                          text-decoration: none; 
+                                          padding: 15px 35px; 
+                                          border-radius: 50px; 
+                                          font-weight: bold; 
+                                          font-size: 16px; 
+                                          display: inline-block;
+                                          box-shadow: 0 4px 15px rgba(76, 175, 80, 0.3);
+                                          transition: all 0.3s ease;">
+                                    🔑 Reset Password
+                                </a>
+                            </div>
+
+                            <div style="background-color: #f8d7da; border: 1px solid #f5c6cb; border-radius: 6px; padding: 15px; margin: 30px 0;">
+                                <p style="color: #721c24; margin: 0; font-size: 14px; text-align: center;">
+                                    ⏰ This reset link will expire in 1 hour for security purposes.
+                                </p>
+                            </div>
+
+                            <div style="border-top: 1px solid #eeeeee; padding-top: 25px; margin-top: 30px;">
+                                <p style="color: #888888; font-size: 14px; line-height: 1.5; margin-bottom: 15px;">
+                                    If the button doesn't work, copy and paste this link into your browser:
+                                </p>
+                                <p style="background-color: #f8f9fa; padding: 10px; border-radius: 4px; word-break: break-all; font-size: 13px; color: #666666; margin: 0;">
+                                    ${resetLink}
+                                </p>
+                            </div>
+                        </div>
+
+                        <!-- Footer -->
+                        <div style="background-color: #f8fff9; padding: 30px; text-align: center; border-top: 1px solid #e8f5e8;">
+                            <div style="margin-bottom: 20px;">
+                                <span style="font-size: 24px; margin: 0 5px;">🔐</span>
+                                <span style="font-size: 24px; margin: 0 5px;">🌱</span>
+                                <span style="font-size: 24px; margin: 0 5px;">🛡️</span>
+                            </div>
+                            
+                            <p style="color: #2E7D32; margin: 0 0 10px 0; font-weight: bold; font-size: 16px;">
+                                Your security is important to us!
+                            </p>
+                            
+                            <p style="color: #666666; font-size: 14px; margin: 0 0 15px 0; line-height: 1.4;">
+                                If you didn't request this password reset, please contact our support team immediately.
+                            </p>
+                            
+                            <p style="color: #888888; font-size: 12px; margin: 0;">
+                                This email was sent from Green Guardian. If you didn't request a password reset, please ignore this email.
+                            </p>
+                            
+                            <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e8f5e8;">
+                                <p style="color: #aaaaaa; font-size: 11px; margin: 0;">
+                                    © 2025 Green Guardian. All rights reserved.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </body>
+                </html>
+            `,
+        };
+
+        const result = await transporter.sendMail(mailOptions);
+        console.log('Password reset email sent successfully:', result.response);
+        return result;
+    } catch (error) {
+        console.error('Error sending password reset email:', error);
+        throw error;
+    }
+};
+
+module.exports = { 
+    refreshToken, 
+    signIn, 
+    signOut, 
+    addAdminAndStaff, 
+    verifyEmailAndSetPassword, 
+    listAdmins,
+    changePassword,
+    forgotPassword,
+    resetPassword
+};
