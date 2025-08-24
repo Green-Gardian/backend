@@ -106,17 +106,25 @@ const signIn = async (req, res) => {
 
         const user = queryRes.rows[0];
 
+        // Check if user is blocked
+        if (user.is_blocked) {
+            return res.status(403).json({ message: "Account has been blocked. Please contact support." });
+        }
+
         const match = await bcrypt.compare(password, user.password_hash);
         if (!match) {
             return res.status(404).json({ message: "Invalid Password" });
         }
 
         const tokens = generateTokens(user);
+        console.log("Generated tokens:", tokens);
 
         await pool.query(`INSERT INTO refresh_tokens (user_id, token, created_at) VALUES ($1, $2, CURRENT_TIMESTAMP)
         `, [user.id, tokens.refresh_token]);
 
-        return res.status(200).json({ message: "User logged in successfully", ...tokens, username: user.username, is_verified: user.is_verified });
+        const response = { message: "User logged in successfully", ...tokens, username: user.username, is_verified: user.is_verified, role: user.role };
+        console.log("Signin response:", response);
+        return res.status(200).json(response);
     }
     catch (error) {
         return res.status(500).json({ message: `Unable to sign in` });
@@ -681,6 +689,177 @@ const sendPasswordResetEmail = async (recipientUsername, recipientEmail, resetTo
     }
 };
 
+// Super Admin Functions
+const getAllUsers = async (req, res) => {
+    try {
+        const { page = 1, limit = 10, role, search } = req.query;
+        const offset = (page - 1) * limit;
+        
+        let whereClause = '';
+        let values = [];
+        let valueIndex = 1;
+
+        if (role && role !== 'all') {
+            whereClause += `WHERE role = $${valueIndex}`;
+            values.push(role);
+            valueIndex++;
+        }
+
+        if (search) {
+            const searchCondition = `WHERE (first_name ILIKE $${valueIndex} OR last_name ILIKE $${valueIndex} OR email ILIKE $${valueIndex} OR username ILIKE $${valueIndex})`;
+            if (whereClause) {
+                whereClause = whereClause.replace('WHERE', 'AND');
+                whereClause = `WHERE ${whereClause} AND (first_name ILIKE $${valueIndex} OR last_name ILIKE $${valueIndex} OR email ILIKE $${valueIndex} OR username ILIKE $${valueIndex})`;
+            } else {
+                whereClause = searchCondition;
+            }
+            values.push(`%${search}%`);
+            valueIndex++;
+        }
+
+        // Get total count
+        const countQuery = `SELECT COUNT(*) FROM users ${whereClause}`;
+        const countResult = await pool.query(countQuery, values);
+        const totalUsers = parseInt(countResult.rows[0].count);
+
+        // Get users with pagination
+        const usersQuery = `
+            SELECT id, first_name, last_name, username, email, phone_number, role, is_verified, is_blocked, created_at, updated_at
+            FROM users 
+            ${whereClause}
+            ORDER BY created_at DESC
+            LIMIT $${valueIndex} OFFSET $${valueIndex + 1}
+        `;
+        values.push(limit, offset);
+        
+        const usersResult = await pool.query(usersQuery, values);
+
+        return res.status(200).json({
+            users: usersResult.rows,
+            pagination: {
+                currentPage: parseInt(page),
+                totalPages: Math.ceil(totalUsers / limit),
+                totalUsers,
+                limit: parseInt(limit)
+            }
+        });
+    } catch (error) {
+        console.error("Error fetching users:", error);
+        return res.status(500).json({ message: "Internal server error." });
+    }
+};
+
+const blockUser = async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const { isBlocked } = req.body;
+
+        if (typeof isBlocked !== 'boolean') {
+            return res.status(400).json({ message: "isBlocked must be a boolean value" });
+        }
+
+        // First check if user exists and is not a super_admin
+        const userCheck = await pool.query(
+            `SELECT id, role FROM users WHERE id = $1`,
+            [userId]
+        );
+
+        if (userCheck.rows.length === 0) {
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        if (userCheck.rows[0].role === 'super_admin') {
+            return res.status(403).json({ message: "Cannot block super admin users" });
+        }
+
+        // Add is_blocked column if it doesn't exist
+        await pool.query(`
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN DEFAULT FALSE
+        `);
+
+        // Update user blocked status
+        const result = await pool.query(
+            `UPDATE users SET is_blocked = $1, updated_at = NOW() WHERE id = $2 RETURNING id, first_name, last_name, email, role, is_blocked`,
+            [isBlocked, userId]
+        );
+
+        return res.status(200).json({
+            message: `User ${isBlocked ? 'blocked' : 'unblocked'} successfully`,
+            user: result.rows[0]
+        });
+    } catch (error) {
+        console.error("Error blocking user:", error);
+        return res.status(500).json({ message: "Internal server error." });
+    }
+};
+
+const deleteUser = async (req, res) => {
+    try {
+        const { userId } = req.params;
+
+        // First check if user exists and is not a super_admin
+        const userCheck = await pool.query(
+            `SELECT id, role FROM users WHERE id = $1`,
+            [userId]
+        );
+
+        if (userCheck.rows.length === 0) {
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        if (userCheck.rows[0].role === 'super_admin') {
+            return res.status(403).json({ message: "Cannot delete super admin users" });
+        }
+
+        // Delete user (cascade will handle related records)
+        await pool.query(`DELETE FROM users WHERE id = $1`, [userId]);
+
+        return res.status(200).json({
+            message: "User deleted successfully"
+        });
+    } catch (error) {
+        console.error("Error deleting user:", error);
+        return res.status(500).json({ message: "Internal server error." });
+    }
+};
+
+const getSystemStats = async (req, res) => {
+    try {
+        // Get counts for different user roles
+        const userStats = await pool.query(`
+            SELECT 
+                role,
+                COUNT(*) as count,
+                COUNT(CASE WHEN is_verified = true THEN 1 END) as verified_count,
+                COUNT(CASE WHEN is_blocked = true THEN 1 END) as blocked_count
+            FROM users 
+            GROUP BY role
+        `);
+
+        // Get society count
+        const societyCount = await pool.query(`SELECT COUNT(*) as count FROM societies`);
+        
+        // Get recent activity (last 7 days)
+        const recentActivity = await pool.query(`
+            SELECT 
+                COUNT(*) as new_users,
+                COUNT(CASE WHEN role = 'admin' THEN 1 END) as new_admins,
+                COUNT(CASE WHEN role = 'customer_support' THEN 1 END) as new_staff
+            FROM users 
+            WHERE created_at >= NOW() - INTERVAL '7 days'
+        `);
+
+        return res.status(200).json({
+            userStats: userStats.rows,
+            societyCount: parseInt(societyCount.rows[0].count),
+            recentActivity: recentActivity.rows[0]
+        });
+    } catch (error) {
+        console.error("Error fetching system stats:", error);
+        return res.status(500).json({ message: "Internal server error." });
+    }
+};
+
 module.exports = { 
     refreshToken, 
     signIn, 
@@ -690,5 +869,9 @@ module.exports = {
     listAdmins,
     changePassword,
     forgotPassword,
-    resetPassword
+    resetPassword,
+    getAllUsers,
+    blockUser,
+    deleteUser,
+    getSystemStats
 };

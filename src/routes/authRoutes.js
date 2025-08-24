@@ -9,32 +9,17 @@ const {
     verifyEmailAndSetPassword,
     changePassword,
     forgotPassword,
-    resetPassword
+    resetPassword,
+    getAllUsers,
+    blockUser,
+    deleteUser,
+    getSystemStats
 } = require("../controllers/authController");
-const { verifyToken } = require("../middlewares/authMiddleware")
-
-
-const verifySuperAdmin = (req, res, next) => {
-    if( req.user.role === 'super_admin') {
-        next();
-    }   
-    else {
-        return res.status(403).json({ message: "Forbidden" });
-    }
-}
-
-const verifyAdminOrSuperAdmin = (req, res, next) => {
-    if (req.user.role === 'super_admin' || req.user.role === 'admin') {
-        next();
-    }
-    else {
-        return res.status(403).json({ message: "Forbidden"});
-    }
-}
+const { verifyToken, verifySuperAdmin, verifyAdminOrSuperAdmin } = require("../middlewares/authMiddleware")
 
 router.post("/signout", verifyToken, signOut);
 router.get("/list-admins", verifyToken, verifySuperAdmin, listAdmins);
-router.post("/sign-in", signIn);
+router.post("/signin", signIn);
 router.post("/add-admin-and-staff", verifyToken, verifyAdminOrSuperAdmin, addAdminAndStaff);
 router.post("/refresh-token", verifyToken, refreshToken);
 router.post("/verify-email", verifyEmailAndSetPassword);
@@ -42,5 +27,10 @@ router.post("/change-password", verifyToken, changePassword);
 router.post("/forgot-password", forgotPassword);
 router.post("/reset-password", resetPassword);
 
+// Super Admin Routes
+router.get("/users", verifyToken, verifySuperAdmin, getAllUsers);
+router.patch("/users/:userId/block", verifyToken, verifySuperAdmin, blockUser);
+router.delete("/users/:userId", verifyToken, verifySuperAdmin, deleteUser);
+router.get("/system-stats", verifyToken, verifySuperAdmin, getSystemStats);
 
 module.exports = router;
