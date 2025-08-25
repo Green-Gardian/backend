@@ -22,6 +22,7 @@ const initDb = async () => {
                 email VARCHAR(255) UNIQUE NOT NULL,
                 password_hash TEXT,
                 role VARCHAR(50) NOT NULL CHECK (role IN ('driver', 'customer_support' , 'admin', 'super_admin')),
+                society_id INTEGER REFERENCES societies(id) ON DELETE CASCADE,
                 is_verified BOOLEAN DEFAULT FALSE,
                 is_blocked BOOLEAN DEFAULT FALSE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -63,15 +64,6 @@ const initDb = async () => {
         );`);
 
         await pool.query(`
-            CREATE TABLE IF NOT EXISTS society_admins (
-                id SERIAL PRIMARY KEY,
-                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-                society_id INTEGER REFERENCES societies(id) ON DELETE CASCADE,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );`);
-
-        await pool.query(`
             CREATE TABLE IF NOT EXISTS society_license (
                 id SERIAL PRIMARY KEY,
                 society_id INTEGER REFERENCES societies(id) ON DELETE CASCADE,
@@ -102,6 +94,15 @@ const initDb = async () => {
         await pool.query(`
             CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user_id 
             ON password_reset_tokens(user_id);
+            `);
+
+        await pool.query(`
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS society_id INTEGER REFERENCES societies(id) ON DELETE SET NULL;
+            `);
+
+        await pool.query(`
+            CREATE INDEX IF NOT EXISTS idx_users_society_id 
+            ON users(society_id);
             `);
 
         console.log("Database initialized.")

@@ -25,15 +25,19 @@ const generateTokens = (user) => {
 
 const addAdminAndStaff = async (req, res) => {
     try {
-        const { firstName, lastName, phone, role, email } = req.body;
+        const { firstName, lastName, phone, role, email, societyId } = req.body;
         if (!firstName || !lastName || !phone || !role || !email) {
             return res.status(400).json({ message: "All fields are required" });
+        }
+
+        // Validate society_id for non-super_admin roles
+        if (role !== 'super_admin' && !societyId) {
+            return res.status(400).json({ message: "Society ID is required for non-super admin roles" });
         }
 
         const username = email.split('@')[0];
 
         const regex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
-
 
         if (!regex.test(email)) {
             return res.status(400).json({ message: "Invalid email address" });
@@ -61,10 +65,18 @@ const addAdminAndStaff = async (req, res) => {
             return res.status(400).json({ message: 'Phone Number already in user.'})
         }
 
-        let insertQuery = {
-            text: `INSERT INTO users (first_name,last_name,username, phone_number , email,role) values ($1,$2,$3,$4,$5,$6) RETURNING *`,
-            values: [firstName, lastName, username, phone, email, role]
-        };
+        let insertQuery;
+        if (role === 'super_admin') {
+            insertQuery = {
+                text: `INSERT INTO users (first_name, last_name, username, phone_number, email, role) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+                values: [firstName, lastName, username, phone, email, role]
+            };
+        } else {
+            insertQuery = {
+                text: `INSERT INTO users (first_name, last_name, username, phone_number, email, role, society_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+                values: [firstName, lastName, username, phone, email, role, societyId]
+            };
+        }
 
         const createdUser = await pool.query(insertQuery);
         console.log("Created User:", createdUser.rows[0]);
@@ -692,7 +704,7 @@ const sendPasswordResetEmail = async (recipientUsername, recipientEmail, resetTo
 // Super Admin Functions
 const getAllUsers = async (req, res) => {
     try {
-        const { page = 1, limit = 10, role, search } = req.query;
+        const { page = 1, limit = 10, role, search, societyId } = req.query;
         const offset = (page - 1) * limit;
         
         let whereClause = '';
@@ -700,42 +712,122 @@ const getAllUsers = async (req, res) => {
         let valueIndex = 1;
 
         if (role && role !== 'all') {
-            whereClause += `WHERE role = $${valueIndex}`;
+            whereClause += `WHERE u.role = $${valueIndex}`;
             values.push(role);
             valueIndex++;
         }
 
-        if (search) {
-            const searchCondition = `WHERE (first_name ILIKE $${valueIndex} OR last_name ILIKE $${valueIndex} OR email ILIKE $${valueIndex} OR username ILIKE $${valueIndex})`;
+        if (societyId && societyId !== 'all') {
+            const societyCondition = `u.society_id = $${valueIndex}`;
             if (whereClause) {
-                whereClause = whereClause.replace('WHERE', 'AND');
-                whereClause = `WHERE ${whereClause} AND (first_name ILIKE $${valueIndex} OR last_name ILIKE $${valueIndex} OR email ILIKE $${valueIndex} OR username ILIKE $${valueIndex})`;
+                whereClause += ` AND ${societyCondition}`;
             } else {
-                whereClause = searchCondition;
+                whereClause = `WHERE ${societyCondition}`;
+            }
+            values.push(societyId);
+            valueIndex++;
+        }
+
+        if (search) {
+            const searchCondition = `(u.first_name ILIKE $${valueIndex} OR u.last_name ILIKE $${valueIndex} OR u.email ILIKE $${valueIndex} OR u.username ILIKE $${valueIndex})`;
+            if (whereClause) {
+                whereClause += ` AND ${searchCondition}`;
+            } else {
+                whereClause = `WHERE ${searchCondition}`;
             }
             values.push(`%${search}%`);
             valueIndex++;
         }
 
         // Get total count
-        const countQuery = `SELECT COUNT(*) FROM users ${whereClause}`;
+        const countQuery = `
+            SELECT COUNT(*) 
+            FROM users u 
+            LEFT JOIN societies s ON u.society_id = s.id 
+            ${whereClause}
+        `;
         const countResult = await pool.query(countQuery, values);
         const totalUsers = parseInt(countResult.rows[0].count);
 
-        // Get users with pagination
+        // Get users with pagination and society information
         const usersQuery = `
-            SELECT id, first_name, last_name, username, email, phone_number, role, is_verified, is_blocked, created_at, updated_at
-            FROM users 
+            SELECT 
+                u.id, 
+                u.first_name, 
+                u.last_name, 
+                u.username, 
+                u.email, 
+                u.phone_number, 
+                u.role, 
+                u.is_verified, 
+                u.is_blocked, 
+                u.created_at, 
+                u.updated_at,
+                u.society_id,
+                s.society_name,
+                s.city,
+                s.state
+            FROM users u
+            LEFT JOIN societies s ON u.society_id = s.id
             ${whereClause}
-            ORDER BY created_at DESC
+            ORDER BY u.created_at DESC
             LIMIT $${valueIndex} OFFSET $${valueIndex + 1}
         `;
         values.push(limit, offset);
         
         const usersResult = await pool.query(usersQuery, values);
 
+        // Group users by society
+        const usersBySociety = {};
+        const usersWithoutSociety = [];
+
+        usersResult.rows.forEach(user => {
+            if (user.society_id) {
+                if (!usersBySociety[user.society_id]) {
+                    usersBySociety[user.society_id] = {
+                        society: {
+                            id: user.society_id,
+                            name: user.society_name,
+                            city: user.city,
+                            state: user.state
+                        },
+                        users: []
+                    };
+                }
+                usersBySociety[user.society_id].users.push({
+                    id: user.id,
+                    first_name: user.first_name,
+                    last_name: user.last_name,
+                    username: user.username,
+                    email: user.email,
+                    phone_number: user.phone_number,
+                    role: user.role,
+                    is_verified: user.is_verified,
+                    is_blocked: user.is_blocked,
+                    created_at: user.created_at,
+                    updated_at: user.updated_at
+                });
+            } else {
+                usersWithoutSociety.push({
+                    id: user.id,
+                    first_name: user.first_name,
+                    last_name: user.last_name,
+                    username: user.username,
+                    email: user.email,
+                    phone_number: user.phone_number,
+                    role: user.role,
+                    is_verified: user.is_verified,
+                    is_blocked: user.is_blocked,
+                    created_at: user.created_at,
+                    updated_at: user.updated_at
+                });
+            }
+        });
+
         return res.status(200).json({
             users: usersResult.rows,
+            usersBySociety,
+            usersWithoutSociety,
             pagination: {
                 currentPage: parseInt(page),
                 totalPages: Math.ceil(totalUsers / limit),
@@ -849,10 +941,58 @@ const getSystemStats = async (req, res) => {
             WHERE created_at >= NOW() - INTERVAL '7 days'
         `);
 
+        // Get users by society
+        const usersBySociety = await pool.query(`
+            SELECT 
+                s.id,
+                s.society_name,
+                s.city,
+                s.state,
+                u.role,
+                COUNT(*) as count
+            FROM societies s
+            LEFT JOIN users u ON s.id = u.society_id
+            WHERE u.id IS NOT NULL
+            GROUP BY s.id, s.society_name, s.city, s.state, u.role
+            ORDER BY s.society_name, u.role
+        `);
+
+        // Get users without society
+        const usersWithoutSociety = await pool.query(`
+            SELECT 
+                role,
+                COUNT(*) as count
+            FROM users 
+            WHERE society_id IS NULL
+            GROUP BY role
+        `);
+
+        // Process users by society data
+        const societiesWithUsers = {};
+        usersBySociety.rows.forEach(row => {
+            if (!societiesWithUsers[row.id]) {
+                societiesWithUsers[row.id] = {
+                    society: {
+                        id: row.id,
+                        name: row.society_name,
+                        city: row.city,
+                        state: row.state
+                    },
+                    userCounts: []
+                };
+            }
+            societiesWithUsers[row.id].userCounts.push({
+                role: row.role,
+                count: parseInt(row.count)
+            });
+        });
+
         return res.status(200).json({
             userStats: userStats.rows,
             societyCount: parseInt(societyCount.rows[0].count),
-            recentActivity: recentActivity.rows[0]
+            recentActivity: recentActivity.rows[0],
+            societiesWithUsers: Object.values(societiesWithUsers),
+            usersWithoutSociety: usersWithoutSociety.rows
         });
     } catch (error) {
         console.error("Error fetching system stats:", error);
