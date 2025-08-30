@@ -109,12 +109,15 @@ const signIn = async (req, res) => {
     const { email, password } = req.body;
 
     try {
+        console.log(req.body)
         const query = {
             text: `SELECT * FROM users WHERE email = $1`,
             values: [email]
         }
 
         const queryRes = await pool.query(query);
+
+        console.log(queryRes.rows)
 
         if (queryRes.rows.length === 0) {
             return res.status(404).json({ message: "Invalid Email" });
@@ -148,6 +151,7 @@ const signIn = async (req, res) => {
         return res.status(200).json(response);
     }
     catch (error) {
+        console.log(error)
         return res.status(500).json({ message: `Unable to sign in` });
     }
 }
