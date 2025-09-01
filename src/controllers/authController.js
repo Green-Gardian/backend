@@ -139,7 +139,7 @@ const signIn = async (req, res) => {
         return res.status(200).json(response);
     }
     catch (error) {
-        return res.status(500).json({ message: `Unable to sign in` });
+        return res.status(500).json({ message: `Unable to sign in`,error: error.message });
     }
 }
 
@@ -165,7 +165,7 @@ const signOut = async (req, res) => {
 const sendVerificationEmail = async (recipientUsername, recipientEmail, verificationToken) => {
     console.log(`Verification Token: ${verificationToken}`);
 
-    const verificationLink = `http://localhost:3001/auth/verify-email?token=${verificationToken}`;
+    const verificationLink = `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}`;
 
     try {
         const transporter = nodemailer.createTransport({
