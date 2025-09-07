@@ -124,6 +124,7 @@ const initDb = async () => {
                 society_id INTEGER REFERENCES societies(id) ON DELETE CASCADE,
                 chatParticipants TEXT[] NOT NULL,  
                 chatTitle TEXT NOT NULL, 
+                lastMessage TEXT ,
                 status VARCHAR(50) NOT NULL CHECK (status IN ('active', 'in-active','resolved')) DEFAULT 'active',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

@@ -4,17 +4,20 @@ const { pool } = require("../config/db");
 exports.getChatMessages = async (req, res) => {
   const { chatId } = req.params;
 
-
-  console.log("Fetching messages for chatId:", chatId);
-
   try {
     const result = await pool.query(
-      `SELECT * FROM MESSAGE
-       WHERE chat_id = $1
+      `SELECT * FROM message 
+       WHERE chat_id = $1 
        ORDER BY created_at ASC`,
       [chatId]
     );
-    res.json(result.rows);
+
+    const filteredData = result.rows.map((msg) => ({
+      ...msg,
+      isMine: msg.sender_id === req.user.id,
+    }));
+
+    res.json(filteredData);
   } catch (err) {
     console.error("DB error:", err.message);
     res.status(500).json({ error: "Internal server error" });
@@ -23,8 +26,6 @@ exports.getChatMessages = async (req, res) => {
 
 exports.getChatGroup = async (req, res) => {
   const userId = req.user.id.toString();
-
-  console.log("User ID:", userId);
 
   try {
     const result = await pool.query(
@@ -39,8 +40,6 @@ exports.getChatGroup = async (req, res) => {
     }
 
     const chats = result.rows;
-
-    console.log("Fetched chats:", chats);
 
     res.json(chats);
   } catch (err) {
