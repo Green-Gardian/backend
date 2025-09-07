@@ -33,6 +33,7 @@ const generateTokens = (user) => {
 const addAdminAndStaff = async (req, res) => {
   try {
     const { firstName, lastName, phone, role, email, societyId } = req.body;
+
     if (!firstName || !lastName || !phone || !role || !email) {
       return res.status(400).json({ message: "All fields are required" });
     }
@@ -45,70 +46,100 @@ const addAdminAndStaff = async (req, res) => {
     }
 
     const username = email.split("@")[0];
-
     const regex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 
     if (!regex.test(email)) {
       return res.status(400).json({ message: "Invalid email address" });
     }
 
-    const query = {
-      text: `SELECT * FROM users WHERE email = $1`,
-      values: [email],
-    };
-
-    const resultUser = await pool.query(query);
-
+    // Check duplicate email
+    const resultUser = await pool.query(
+      `SELECT * FROM users WHERE email = $1`,
+      [email]
+    );
     if (resultUser.rows.length !== 0) {
       return res.status(400).json({ message: "Email already in use." });
     }
 
-    const phoneQuery = {
-      text: `SELECT * FROM users WHERE phone_number = $1`,
-      values: [phone],
-    };
-
-    const User = await pool.query(phoneQuery);
-
-    if (User.rows.length !== 0) {
-      return res.status(400).json({ message: "Phone Number already in user." });
+    // Check duplicate phone number
+    const userByPhone = await pool.query(
+      `SELECT * FROM users WHERE phone_number = $1`,
+      [phone]
+    );
+    if (userByPhone.rows.length !== 0) {
+      return res.status(400).json({ message: "Phone number already in use." });
     }
 
+    // Insert new user
     let insertQuery;
     if (role === "super_admin") {
       insertQuery = {
-        text: `INSERT INTO users (first_name, last_name, username, phone_number, email, role) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+        text: `INSERT INTO users (first_name, last_name, username, phone_number, email, role) 
+               VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
         values: [firstName, lastName, username, phone, email, role],
       };
     } else {
       insertQuery = {
-        text: `INSERT INTO users (first_name, last_name, username, phone_number, email, role, society_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+        text: `INSERT INTO users (first_name, last_name, username, phone_number, email, role, society_id) 
+               VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
         values: [firstName, lastName, username, phone, email, role, societyId],
       };
     }
 
     const createdUser = await pool.query(insertQuery);
-    console.log("Created User:", createdUser.rows[0]);
+    const newUser = createdUser.rows[0];
+    console.log("✅ Created User:", newUser);
 
+    // If role = admin → add to society chat
+    if (role === "admin") {
+      const chat = await pool.query(
+        `SELECT * FROM chat WHERE society_id = $1`,
+        [societyId]
+      );
+
+      if (chat.rows.length > 0) {
+        const currentParticipants = chat.rows[0].chatparticipants || [];
+
+        if (!currentParticipants.includes(newUser.id)) {
+          const updatedParticipants = [...currentParticipants, newUser.id];
+
+          await pool.query(
+            `UPDATE chat SET chatparticipants = $1 WHERE id = $2`,
+            [updatedParticipants, chat.rows[0].id]
+          );
+
+          console.log(
+            `✅ Added admin ${newUser.id} to chat ${chat.rows[0].id}`
+          );
+        }
+      } else {
+        // If no chat exists for this society, create one
+        const newChat = await pool.query(
+          `INSERT INTO chat (societyId, chatParticipants, lastMessage) 
+           VALUES ($1, $2, $3) RETURNING *`,
+          [societyId, [newUser.id], null]
+        );
+        console.log("✅ Created new chat for society:", newChat.rows[0]);
+      }
+    }
+
+    // Email verification token
     const verificationToken = crypto.randomBytes(32).toString("hex");
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours from now
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hrs
 
-    const verificationQuery = {
-      text: `INSERT INTO email_verification_tokens (user_id, token, expires_at) VALUES ($1, $2, $3) RETURNING *`,
-      values: [createdUser.rows[0].id, verificationToken, expiresAt],
-    };
-
-    await pool.query(verificationQuery);
+    await pool.query(
+      `INSERT INTO email_verification_tokens (user_id, token, expires_at) 
+       VALUES ($1, $2, $3)`,
+      [newUser.id, verificationToken, expiresAt]
+    );
 
     await sendVerificationEmail(username, email, verificationToken);
 
-    return res
-      .status(201)
-      .json({
-        message: `Staff created. Email sent to verify and set password.`,
-      });
+    return res.status(201).json({
+      message: `Staff created. Email sent to verify and set password.`,
+    });
   } catch (error) {
-    console.error(`Error creating user: ${error.message}`);
+    console.error(`❌ Error creating user: ${error.message}`);
     return res.status(500).json({ error: "Server Error" });
   }
 };
@@ -397,11 +428,9 @@ const verifyEmailAndSetPassword = async (req, res) => {
 
       await client.query(`COMMIT`);
 
-      return res
-        .status(200)
-        .json({
-          message: `Email successfully Verified and password is set. You can now log in. `,
-        });
+      return res.status(200).json({
+        message: `Email successfully Verified and password is set. You can now log in. `,
+      });
     } catch (error) {
       await client.query(`ROLLBACK`);
       throw error;
@@ -528,11 +557,9 @@ const forgotPassword = async (req, res) => {
     );
 
     if (userQuery.rows.length === 0) {
-      return res
-        .status(200)
-        .json({
-          message: "If the email exists, a password reset link has been sent",
-        });
+      return res.status(200).json({
+        message: "If the email exists, a password reset link has been sent",
+      });
     }
 
     const user = userQuery.rows[0];
@@ -553,11 +580,9 @@ const forgotPassword = async (req, res) => {
 
     await sendPasswordResetEmail(user.username, user.email, resetToken);
 
-    return res
-      .status(200)
-      .json({
-        message: "If the email exists, a password reset link has been sent",
-      });
+    return res.status(200).json({
+      message: "If the email exists, a password reset link has been sent",
+    });
   } catch (error) {
     console.error(`Error in forgot password: ${error.message}`);
     return res.status(500).json({ message: "Server Error" });
