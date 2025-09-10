@@ -8,11 +8,13 @@ const licenseRouter = require("./routes/licenseRoutes");
 const driverRouter = require("./routes/driverRoutes");
 const alertRouter = require("./routes/alertRoutes");
 const { verifyToken } = require("./middlewares/authMiddleware");
-const db = require("./config/db");
+// const db = require("./config/db");
+const serviceRouter = require("./routes/residentServiceRoutes");
 const websocketService = require("./services/websocketService");
 require("dotenv").config();
 const cors = require("cors");
 const morgan = require("morgan");
+
 
 const PORT = process.env.PORT || 3001;
 
@@ -30,8 +32,10 @@ app.use("/society", verifyToken, societyRouter);
 app.use("/license", verifyToken, licenseRouter);
 app.use("/driver", verifyToken, driverRouter);
 app.use("/alerts", alertRouter);
+app.use("/services", verifyToken, serviceRouter);
 
 // Health check endpoint
+
 app.get("/health", (req, res) => {
   res.json({
     status: "healthy",
@@ -53,7 +57,10 @@ app.get("/websocket/stats", verifyToken, (req, res) => {
   });
 });
 
+
 server.listen(PORT, () => {
   console.log(`Server is running on PORT:${PORT}`);
   console.log("WebSocket server is ready for connections");
 });
+
+

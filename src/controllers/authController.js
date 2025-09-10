@@ -8,11 +8,7 @@ const { google } = require("googleapis");
 
 const generateTokens = (user) => {
     try {
-        const access_token = jwt.sign({ 
-            id: user.id, 
-            role: user.role,
-            society_id: user.society_id 
-        }, process.env.JWT_ACCESS_SECRET, {
+        const access_token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_ACCESS_SECRET, {
             expiresIn: process.env.JWT_ACCESS_EXPIRY
         });
 
@@ -83,7 +79,7 @@ const addAdminAndStaff = async (req, res) => {
         }
 
         const createdUser = await pool.query(insertQuery);
-
+        console.log("Created User:", createdUser.rows[0]);
 
         const verificationToken = crypto.randomBytes(32).toString("hex");
         const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours from now
@@ -136,18 +132,13 @@ const signIn = async (req, res) => {
         }
 
         const tokens = generateTokens(user);
+        console.log("Generated tokens:", tokens);
 
         await pool.query(`INSERT INTO refresh_tokens (user_id, token, created_at) VALUES ($1, $2, CURRENT_TIMESTAMP)
         `, [user.id, tokens.refresh_token]);
 
-        const response = { 
-            message: "User logged in successfully", 
-            ...tokens, 
-            username: user.username, 
-            is_verified: user.is_verified, 
-            role: user.role,
-            society_id: user.society_id 
-        };
+        const response = { message: "User logged in successfully", ...tokens, username: user.username, is_verified: user.is_verified, role: user.role };
+        console.log("Signin response:", response);
         return res.status(200).json(response);
     }
     catch (error) {
@@ -314,14 +305,17 @@ const verifyEmailAndSetPassword = async (req, res) => {
         }
 
         if (!password) {
+            console.log(`Password field is required.`)
             return res.status(400).json({ message: `Password field is required.` });
         }
 
         if (!confirmPassword) {
+            console.log(`Confirm Password field is required.`)
             return res.status(400).json({ message: `Confirm Password field is required.` });
         }
 
         if (password !== confirmPassword) {
+            console.log(`Passwords donot match.`)
             return res.status(400).json({ message: `Passwords donot match.` });
         }
 
@@ -336,10 +330,12 @@ const verifyEmailAndSetPassword = async (req, res) => {
 
 
         if (tokenQuery.rows.length === 0) {
+            console.log("Expired or invalid token");
             return res.status(400).json({ message: `Expired or invalid token` })
         }
 
         if (tokenQuery.rows[0].is_verified === "TRUE") {
+            console.log(`Email Already verified.`);
             return res.status(400).json({ message: `Email Already verified.` })
         }
 
@@ -355,7 +351,8 @@ const verifyEmailAndSetPassword = async (req, res) => {
         )
 
         if (updatePassword.rows.length === 0) {
-            return res.status(500).json({ message: `Error updating password.` })
+            console.log(`Error updating password.`);
+            return res.status.json({ message: `Error updating password.` })
         }
 
         try {
@@ -382,35 +379,25 @@ const verifyEmailAndSetPassword = async (req, res) => {
         }
     }
     catch (error) {
+        console.log(`Email Verification Failed`);
         return res.status(500).json({ message: `Email Verification Failed`, error: error.message })
     }
 
 
 }
 
-const refreshToken = async (req, res) => {
+const refreshToken = (req, res) => {
     try {
         const { refresh_token } = req.body;
         if (!refresh_token) return res.status(401).json({ message: 'Refresh token required' });
 
+
         const decoded = jwt.verify(refresh_token, process.env.JWT_REFRESH_SECRET);
 
-        // Get user's current role and society_id from database
-        const userQuery = await pool.query(`SELECT role, society_id FROM users WHERE id = $1`, [decoded.id]);
-        
-        if (userQuery.rows.length === 0) {
-            return res.status(404).json({ message: 'User not found' });
-        }
-
-        const user = userQuery.rows[0];
-
-        const access_token = jwt.sign({ 
-            id: decoded.id, 
-            role: user.role,
-            society_id: user.society_id 
-        }, process.env.JWT_ACCESS_SECRET, {
+        const access_token = jwt.sign({ id: decoded.id, role: "admin" }, process.env.JWT_ACCESS_SECRET, {
             expiresIn: process.env.JWT_ACCESS_EXPIRY
         });
+
 
         return res.status(200).json({ access_token })
     }
