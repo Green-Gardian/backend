@@ -1,4 +1,6 @@
 const { Server } = require('socket.io');
+const jwt = require('jsonwebtoken');
+const { pool } = require('../config/db');
 
 class WebSocketService {
     constructor() {
@@ -29,7 +31,10 @@ class WebSocketService {
         this.io.on('connection', (socket) => {
             console.log(`Client connected: ${socket.id}`);
 
-            // Handle user authentication
+            // Handle JWT authentication (for chat system)
+            this.handleJWTConnection(socket);
+
+            // Handle user authentication (for alert system)
             socket.on('authenticate', (data) => {
                 this.handleAuthentication(socket, data);
             });
@@ -49,6 +54,15 @@ class WebSocketService {
                 this.handleUpdatePreferences(socket, data);
             });
 
+            // Chat system events
+            socket.on('joinRoom', (data) => {
+                this.handleJoinRoom(socket, data);
+            });
+
+            socket.on('message', (data) => {
+                this.handleMessage(socket, data);
+            });
+
             // Handle disconnect
             socket.on('disconnect', () => {
                 this.handleDisconnect(socket);
@@ -62,7 +76,31 @@ class WebSocketService {
     }
 
     /**
-     * Handle user authentication
+     * Handle JWT authentication (for chat system)
+     */
+    handleJWTConnection(socket) {
+        try {
+            const token = socket.handshake.auth?.token;
+
+            if (!token) {
+                console.log("No token provided, disconnecting socket");
+                socket.disconnect();
+                return;
+            }
+
+            const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
+            socket.user = { id: decoded.id, username: decoded.username };
+
+            console.log("User connected:", socket.user.id);
+        } catch (err) {
+            console.error("Invalid token:", err.message);
+            socket.disconnect();
+            return;
+        }
+    }
+
+    /**
+     * Handle user authentication (for alert system)
      */
     handleAuthentication(socket, data) {
         try {
@@ -398,6 +436,66 @@ class WebSocketService {
         } catch (error) {
             console.error('Error broadcasting system message:', error);
             return false;
+        }
+    }
+
+    /**
+     * Handle joining a chat room
+     */
+    handleJoinRoom(socket, data) {
+        try {
+            const { chatId, userId } = data;
+            console.log(`Joining room with chat id: ${chatId}`);
+
+            const rooms = Array.from(socket.rooms);
+            rooms.forEach((room) => {
+                if (room !== socket.id) {
+                    socket.leave(room);
+                    console.log(`User ${userId} left room ${room}`);
+                }
+            });
+
+            socket.join(chatId);
+            console.log(`User ${userId} joined room ${chatId}`);
+        } catch (error) {
+            console.error('Join room error:', error);
+            socket.emit('error', { message: 'Failed to join room' });
+        }
+    }
+
+    /**
+     * Handle chat message
+     */
+    async handleMessage(socket, data) {
+        try {
+            const { chatId, content } = data;
+            const senderId = socket.user.id;
+            const sender_name = socket.user.username;
+
+            console.log("Sender ID from the user stored in the socket:", senderId);
+            console.log("Sender name from the user stored in the socket:", sender_name);
+
+            await pool.query(
+                `INSERT INTO message (chat_id, content, sender_id, sender_name)
+                 VALUES ($1, $2, $3, $4)`,
+                [chatId, content, senderId, sender_name]
+            );
+
+            await pool.query(`UPDATE chat SET lastmessage = $1 WHERE id = $2`, [content, chatId]);
+
+            const messageData = {
+                chatId,
+                content,
+                senderId,
+                sender_name,
+                created_at: new Date(),
+            };
+
+            this.io.to(chatId).emit("receiveMessage", messageData);
+            socket.emit("messageSent", { success: true, messageData });
+        } catch (err) {
+            console.error("DB error:", err.message);
+            socket.emit("messageSent", { success: false, error: err.message });
         }
     }
 

@@ -1,34 +1,10 @@
-const jwt = require("jsonwebtoken");
-const bcrypt = require("bcrypt");
 const { pool } = require("../config/db");
 require("dotenv").config();
 const crypto = require("crypto");
 const nodemailer = require("nodemailer");
 const { google } = require("googleapis");
-
-const generateTokens = (user) => {
-  try {
-    const access_token = jwt.sign(
-      { id: user.id, role: user.role, username: user.username },
-      process.env.JWT_ACCESS_SECRET,
-      {
-        expiresIn: process.env.JWT_ACCESS_EXPIRY,
-      }
-    );
-
-    const refresh_token = jwt.sign(
-      { id: user.id, username: user.useranme },
-      process.env.JWT_REFRESH_SECRET,
-      {
-        expiresIn: process.env.JWT_REFRESH_EXPIRY,
-      }
-    );
-
-    return { access_token, refresh_token };
-  } catch (error) {
-    console.log(`ERROR: Generating access and refresh token: ${error}`);
-  }
-};
+const { generateTokens } = require("../utils/generateToken");
+const { hashPassword, comparePassword } = require("../utils/hashPassword");
 
 const addAdminAndStaff = async (req, res) => {
   try {
@@ -168,7 +144,7 @@ const signIn = async (req, res) => {
         .json({ message: "Account has been blocked. Please contact support." });
     }
 
-    const match = await bcrypt.compare(password, user.password_hash);
+    const match = await comparePassword(password, user.password_hash);
     if (!match) {
       return res.status(404).json({ message: "Invalid Password" });
     }
@@ -400,8 +376,7 @@ const verifyEmailAndSetPassword = async (req, res) => {
 
     const client = await pool.connect();
 
-    const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(password, saltRounds);
+    const hashedPassword = await hashPassword(password);
 
     const updatePassword = await pool.query(
       `UPDATE users SET password_hash = $1 WHERE id = $2 RETURNING *`,
@@ -513,7 +488,7 @@ const changePassword = async (req, res) => {
     const user = userQuery.rows[0];
 
     // Verify current password
-    const isCurrentPasswordValid = await bcrypt.compare(
+    const isCurrentPasswordValid = await comparePassword(
       currentPassword,
       user.password_hash
     );
@@ -522,8 +497,7 @@ const changePassword = async (req, res) => {
     }
 
     // Hash new password
-    const saltRounds = 10;
-    const hashedNewPassword = await bcrypt.hash(newPassword, saltRounds);
+    const hashedNewPassword = await hashPassword(newPassword);
 
     // Update password in database
     await pool.query(
@@ -636,8 +610,7 @@ const resetPassword = async (req, res) => {
       await client.query("BEGIN");
 
       // Hash new password
-      const saltRounds = 10;
-      const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
+      const hashedPassword = await hashPassword(newPassword);
 
       // Update user password
       await client.query(

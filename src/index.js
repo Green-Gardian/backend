@@ -2,14 +2,12 @@ const express = require("express");
 const http = require("http");
 const cors = require("cors");
 const morgan = require("morgan");
-const { Server } = require("socket.io");
 
 // Load environment variables
 require("dotenv").config();
 
 // Import services and config
 const websocketService = require("./services/websocketService");
-const { initSocket } = require("./config/socket");
 
 // Import middleware
 const { verifyToken } = require("./middlewares/authMiddleware");
@@ -28,18 +26,8 @@ const PORT = process.env.PORT || 3001;
 const app = express();
 const server = http.createServer(app);
 
-// Initialize WebSocket service
+// Initialize unified WebSocket service (handles both alerts and chat)
 websocketService.initialize(server);
-
-// Initialize Socket.IO
-const io = new Server(server, {
-  cors: {
-    origin: "*", 
-    methods: ["GET", "POST"],
-  },
-});
-
-initSocket(io);
 
 // Middleware
 app.use(cors());
