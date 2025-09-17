@@ -137,12 +137,17 @@ const signIn = async (req, res) => {
 
     const user = queryRes.rows[0];
 
-    // Check if user is blocked
-    if (user.is_blocked) {
-      return res
-        .status(403)
-        .json({ message: "Account has been blocked. Please contact support." });
-    }
+        // Check if user is blocked
+        if (user.is_blocked) {
+            return res.status(403).json({ message: "Account has been blocked. Please contact support." });
+        }
+
+        // Check if user is verified
+        if (!user.is_verified) {
+            return res.status(403).json({ 
+                message: "Please verify your email address before signing in. Check your email for a verification link." 
+            });
+        }
 
     const match = await comparePassword(password, user.password_hash);
     if (!match) {
@@ -202,7 +207,7 @@ const sendVerificationEmail = async (
 ) => {
   // console.log(`Verification Token: ${verificationToken}`);
 
-  const verificationLink = `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}`;
+    const verificationLink = `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}`;
 
   try {
     const transporter = nodemailer.createTransport({
@@ -525,21 +530,39 @@ const forgotPassword = async (req, res) => {
       return res.status(400).json({ message: "Invalid email address" });
     }
 
-    const userQuery = await pool.query(
-      `SELECT id, username, email FROM users WHERE email = $1`,
-      [email]
-    );
-
-    if (userQuery.rows.length === 0) {
-      return res.status(200).json({
-        message: "If the email exists, a password reset link has been sent",
-      });
-    }
+        const userQuery = await pool.query(`SELECT id, username, email, is_verified FROM users WHERE email = $1`, [email]);
+        
+        if (userQuery.rows.length === 0) {
+            return res.status(200).json({ message: "If the email exists, a password reset link has been sent" });
+        }
 
     const user = userQuery.rows[0];
 
-    const resetToken = crypto.randomBytes(32).toString("hex");
-    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour from now
+        // Check if user is verified
+        if (!user.is_verified) {
+            // User is not verified - send verification email instead
+            const verificationToken = crypto.randomBytes(32).toString("hex");
+            const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours from now
+
+            // Delete any existing verification tokens
+            await pool.query(`DELETE FROM email_verification_tokens WHERE user_id = $1`, [user.id]);
+
+            // Insert new verification token
+            await pool.query(`
+                INSERT INTO email_verification_tokens (user_id, token, expires_at) 
+                VALUES ($1, $2, $3)`,
+                [user.id, verificationToken, expiresAt]);
+
+            await sendVerificationEmail(user.username, user.email, verificationToken);
+            
+            return res.status(200).json({ 
+                message: "Your email is not verified. A verification link has been sent to your email address." 
+            });
+        }
+
+        // User is verified - proceed with password reset
+        const resetToken = crypto.randomBytes(32).toString("hex");
+        const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour from now
 
     await pool.query(`DELETE FROM password_reset_tokens WHERE user_id = $1`, [
       user.id,
@@ -612,11 +635,9 @@ const resetPassword = async (req, res) => {
       // Hash new password
       const hashedPassword = await hashPassword(newPassword);
 
-      // Update user password
-      await client.query(
-        `UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2`,
-        [hashedPassword, resetTokenData.user_id]
-      );
+      // Update user password and mark as verified (since they have access to email)
+      await client.query(`UPDATE users SET password_hash = $1, is_verified = TRUE, updated_at = NOW() WHERE id = $2`,
+      [hashedPassword, resetTokenData.user_id]);
 
       // Mark token as used
       await client.query(
@@ -646,7 +667,7 @@ const sendPasswordResetEmail = async (
 ) => {
   console.log(`Password Reset Token: ${resetToken}`);
 
-  const resetLink = `http://localhost:3001/auth/reset-password?token=${resetToken}`;
+  const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
 
   try {
     const transporter = nodemailer.createTransport({
