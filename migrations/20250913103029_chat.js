@@ -35,13 +35,14 @@ module.exports.up = async function (knex) {
         ON MESSAGE(sender_id);
 
     -- Add triggers for updating timestamps on chat and MESSAGE tables
-    CREATE TRIGGER IF NOT EXISTS update_chat_updated_at 
-        BEFORE UPDATE ON chat 
-        FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-    
-    CREATE TRIGGER IF NOT EXISTS update_message_updated_at 
-        BEFORE UPDATE ON MESSAGE 
-        FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+    CREATE TRIGGER update_chat_updated_at 
+    BEFORE UPDATE ON chat 
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_message_updated_at 
+    BEFORE UPDATE ON MESSAGE 
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
   `);
 };
 
