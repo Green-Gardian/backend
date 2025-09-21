@@ -326,11 +326,17 @@ const signIn = async (req, res) => {
     }
     const user = queryRes.rows[0];
 
-    if (user.is_blocked) {
-      return res
-        .status(403)
-        .json({ message: "Account has been blocked. Please contact support." });
-    }
+        // Check if user is blocked
+        if (user.is_blocked) {
+            return res.status(403).json({ message: "Account has been blocked. Please contact support." });
+        }
+
+        // Check if user is verified
+        if (!user.is_verified) {
+            return res.status(403).json({ 
+                message: "Please verify your email address before signing in. Check your email for a verification link." 
+            });
+        }
 
     const match = await comparePassword(password, user.password_hash);
     if (!match) {
@@ -375,11 +381,26 @@ const signOut = async (req, res) => {
   }
 };
 
-const sendVerificationEmail = async (recipientUsername, recipientEmail, verificationToken) => {
-  const baseUrl = process.env.FRONTEND_URL || "http://localhost:3001";
-  const verificationLink = `${baseUrl.replace(/\/+$/,"")}/verify-email?token=${verificationToken}`;
+const sendVerificationEmail = async (
+  recipientUsername,
+  recipientEmail,
+  verificationToken
+) => {
+  // console.log(`Verification Token: ${verificationToken}`);
+
+    const verificationLink = `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}`;
+
   try {
-    return await sendMail({
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: process.env.SENDER_EMAIL,
+        pass: process.env.SENDER_PASSWORD,
+      },
+    });
+
+    const mailOptions = {
+      from: `Green Guardian <${process.env.SENDER_EMAIL}>`,
       to: recipientEmail,
       subject: "🌱 Welcome to Green Guardian - Verify Your Email",
       html: verificationEmailHTML(recipientUsername, verificationLink),
@@ -567,16 +588,39 @@ const forgotPassword = async (req, res) => {
     if (!email) return res.status(400).json({ message: "Email is required" });
     if (!isEmailValid(email)) return res.status(400).json({ message: "Invalid email address" });
 
-    const user = await getUserByEmail(email);
+        const userQuery = await pool.query(`SELECT id, username, email, is_verified FROM users WHERE email = $1`, [email]);
+        
+        if (userQuery.rows.length === 0) {
+            return res.status(200).json({ message: "If the email exists, a password reset link has been sent" });
+        }
 
-    if (!user) {
-      return res.status(200).json({
-        message: "If the email exists, a password reset link has been sent",
-      });
-    }
+    const user = userQuery.rows[0];
 
-    const resetToken = createRandomToken();
-    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+        // Check if user is verified
+        if (!user.is_verified) {
+            // User is not verified - send verification email instead
+            const verificationToken = crypto.randomBytes(32).toString("hex");
+            const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours from now
+
+            // Delete any existing verification tokens
+            await pool.query(`DELETE FROM email_verification_tokens WHERE user_id = $1`, [user.id]);
+
+            // Insert new verification token
+            await pool.query(`
+                INSERT INTO email_verification_tokens (user_id, token, expires_at) 
+                VALUES ($1, $2, $3)`,
+                [user.id, verificationToken, expiresAt]);
+
+            await sendVerificationEmail(user.username, user.email, verificationToken);
+            
+            return res.status(200).json({ 
+                message: "Your email is not verified. A verification link has been sent to your email address." 
+            });
+        }
+
+        // User is verified - proceed with password reset
+        const resetToken = crypto.randomBytes(32).toString("hex");
+        const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour from now
 
     await deleteExistingResetTokens(user.id);
     await createPasswordResetToken(user.id, resetToken, expiresAt);
@@ -627,10 +671,9 @@ const resetPassword = async (req, res) => {
 
     const hashedPassword = await hashPassword(newPassword);
 
-    await client.query(
-      `UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2`,
-      [hashedPassword, resetTokenData.user_id]
-    );
+      // Update user password and mark as verified (since they have access to email)
+      await client.query(`UPDATE users SET password_hash = $1, is_verified = TRUE, updated_at = NOW() WHERE id = $2`,
+      [hashedPassword, resetTokenData.user_id]);
 
     await client.query(
       `UPDATE password_reset_tokens SET is_used = TRUE WHERE token = $1`,
@@ -651,10 +694,20 @@ const resetPassword = async (req, res) => {
 
 const sendPasswordResetEmail = async (recipientUsername, recipientEmail, resetToken) => {
   console.log(`Password Reset Token: ${resetToken}`);
-  const baseUrl = process.env.FRONTEND_URL || "http://localhost:3001";
-  const resetLink = `${baseUrl.replace(/\/+$/,"")}/auth/reset-password?token=${resetToken}`;
+
+  const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
+
   try {
-    return await sendMail({
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: process.env.SENDER_EMAIL,
+        pass: process.env.SENDER_PASSWORD,
+      },
+    });
+
+    const mailOptions = {
+      from: `Green Guardian <${process.env.SENDER_EMAIL}>`,
       to: recipientEmail,
       subject: "🔐 Green Guardian - Password Reset Request",
       html: resetEmailHTML(recipientUsername, resetLink),
