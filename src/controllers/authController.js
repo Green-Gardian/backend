@@ -1,10 +1,10 @@
-// controllers/authController.js 
+// controllers/authController.js
 
 const { pool } = require("../config/db");
 require("dotenv").config();
 const crypto = require("crypto");
 const nodemailer = require("nodemailer");
-const jwt = require("jsonwebtoken"); 
+const jwt = require("jsonwebtoken");
 const { generateTokens } = require("../utils/generateToken");
 const { hashPassword, comparePassword } = require("../utils/hashPassword");
 
@@ -37,97 +37,12 @@ const getUserByPhone = async (phone) => {
   return r.rows[0] || null;
 };
 
-// const insertUserRecord = async ({
-//   firstName,
-//   lastName,
-//   username,
-//   phone,
-//   email,
-//   role,
-//   societyId, // optional
-// }) => {
-//   if (role === "super_admin") {
-//     const r = await runQuery(
-//       `INSERT INTO users (first_name, last_name, username, phone_number, email, role)
-//        VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-//       [firstName.trim(), lastName.trim(), username, phone, String(email).trim(), role]
-//     );
-//     return r.rows[0];
-//   } else {
-//     const r = await runQuery(
-//       `INSERT INTO users (first_name, last_name, username, phone_number, email, role, society_id)
-//        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-//       [firstName.trim(), lastName.trim(), username, phone, String(email).trim(), role, societyId]
-//     );
-//     return r.rows[0];
-//   }
-// };
-
-// const ensureAdminInSocietyChat = async (role, userId, societyId) => {
-//   if (role !== "admin") return;
-
-//   const chat = await runQuery(`SELECT * FROM chat WHERE society_id = $1`, [societyId]);
-
-//   if (chat.rows.length > 0) {
-//     const row = chat.rows[0];
-//     const currentParticipants = row.chatparticipants || [];
-//     if (!currentParticipants.includes(userId)) {
-//       const updatedParticipants = [...currentParticipants, userId];
-//       await runQuery(`UPDATE chat SET chatparticipants = $1 WHERE id = $2`, [
-//         updatedParticipants,
-//         row.id,
-//       ]);
-//       console.log(`✅ Added admin ${userId} to chat ${row.id}`);
-//     }
-//   } else {
-//     // ✅ fix column casing to unquoted lowercase (postgres default)
-//     const newChat = await runQuery(
-//       `INSERT INTO chat (society_id, chatparticipants, lastmessage)
-//        VALUES ($1, $2, $3) RETURNING *`,
-//       [societyId, [userId], null]
-//     );
-//     console.log("✅ Created new chat for society:", newChat.rows[0]);
-//   }
-// };
-
 const createRandomToken = () => crypto.randomBytes(32).toString("hex");
 
-// const createEmailVerificationToken = async (userId, token, expiresAt) => {
-//   await runQuery(
-//     `INSERT INTO email_verification_tokens (user_id, token, expires_at)
-//      VALUES ($1, $2, $3)`,
-//     [userId, token, expiresAt]
-//   );
-// };
-
-const deleteExistingResetTokens = async (userId) => {
-  await runQuery(`DELETE FROM password_reset_tokens WHERE user_id = $1`, [userId]);
-};
-
-const createPasswordResetToken = async (userId, token, expiresAt) => {
-  await runQuery(
-    `INSERT INTO password_reset_tokens (user_id, token, expires_at)
-     VALUES ($1, $2, $3)`,
-    [userId, token, expiresAt]
-  );
-};
-
 /* -------------------------------
- * Email: transporter + templates
+ * Email templates
  * ----------------------------- */
 
-let _transporter;
-const getTransporter = () => {
-  if (_transporter) return _transporter;
-  _transporter = nodemailer.createTransport({
-    service: "gmail",
-    auth: {
-      user: process.env.SENDER_EMAIL,
-      pass: process.env.SENDER_PASSWORD,
-    },
-  });
-  return _transporter;
-};
 
 const verificationEmailHTML = (recipientUsername, verificationLink) => `
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Email Verification</title></head>
@@ -205,18 +120,6 @@ const resetEmailHTML = (recipientUsername, resetLink) => `
 </body></html>
 `;
 
-const sendMail = async ({ to, subject, html }) => {
-  const transporter = getTransporter();
-  const mailOptions = {
-    from: `Green Guardian <${process.env.SENDER_EMAIL}>`,
-    to,
-    subject,
-    html,
-  };
-  const result = await transporter.sendMail(mailOptions);
-  console.log("Email sent successfully:", result.response);
-  return result;
-};
 
 /* ------------------------------------
  * Controllers
@@ -304,8 +207,7 @@ const addAdminAndStaff = async (req, res) => {
   } catch (error) {
     // If anything failed (including email), rollback so no partial user is left
     try { await client.query("ROLLBACK"); } catch (_) {}
-    console.error(`❌ Error creating user: ${error.message}`);
-    // Optional: surface clearer mail error if we know it
+    console.error(` Error creating user: ${error.message}`);
     if (error.code === "EMAIL_SEND_FAILED" || error.code === "EMAIL_CONFIG_MISSING") {
       return res.status(502).json({ error: "Unable to send verification email" });
     }
@@ -326,17 +228,17 @@ const signIn = async (req, res) => {
     }
     const user = queryRes.rows[0];
 
-        // Check if user is blocked
-        if (user.is_blocked) {
-            return res.status(403).json({ message: "Account has been blocked. Please contact support." });
-        }
+    // Check if user is blocked
+    if (user.is_blocked) {
+      return res.status(403).json({ message: "Account has been blocked. Please contact support." });
+    }
 
-        // Check if user is verified
-        if (!user.is_verified) {
-            return res.status(403).json({ 
-                message: "Please verify your email address before signing in. Check your email for a verification link." 
-            });
-        }
+    // Check if user is verified
+    if (!user.is_verified) {
+      return res.status(403).json({
+        message: "Please verify your email address before signing in. Check your email for a verification link."
+      });
+    }
 
     const match = await comparePassword(password, user.password_hash);
     if (!match) {
@@ -357,7 +259,7 @@ const signIn = async (req, res) => {
       is_verified: user.is_verified,
       role: user.role,
     };
-    // console.log("Signin response:", response);
+
     return res.status(200).json(response);
   } catch (error) {
     return res
@@ -381,16 +283,16 @@ const signOut = async (req, res) => {
   }
 };
 
-const sendVerificationEmail = async (
-  recipientUsername,
-  recipientEmail,
-  verificationToken
-) => {
-  // console.log(`Verification Token: ${verificationToken}`);
-
-    const verificationLink = `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}`;
+const sendVerificationEmail = async (recipientUsername, recipientEmail, verificationToken) => {
+  const verificationLink = `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}`;
 
   try {
+    if (!process.env.SENDER_EMAIL || !process.env.SENDER_PASSWORD) {
+      const err = new Error("Email credentials missing");
+      err.code = "EMAIL_CONFIG_MISSING";
+      throw err;
+    }
+
     const transporter = nodemailer.createTransport({
       service: "gmail",
       auth: {
@@ -399,7 +301,7 @@ const sendVerificationEmail = async (
       },
     });
 
-    const mailOptions = {
+    await transporter.sendMail({
       from: `Green Guardian <${process.env.SENDER_EMAIL}>`,
       to: recipientEmail,
       subject: "🌱 Welcome to Green Guardian - Verify Your Email",
@@ -407,6 +309,7 @@ const sendVerificationEmail = async (
     });
   } catch (error) {
     console.error("Error sending email:", error);
+    if (!error.code) error.code = "EMAIL_SEND_FAILED";
     throw error;
   }
 };
@@ -588,39 +491,40 @@ const forgotPassword = async (req, res) => {
     if (!email) return res.status(400).json({ message: "Email is required" });
     if (!isEmailValid(email)) return res.status(400).json({ message: "Invalid email address" });
 
-        const userQuery = await pool.query(`SELECT id, username, email, is_verified FROM users WHERE email = $1`, [email]);
-        
-        if (userQuery.rows.length === 0) {
-            return res.status(200).json({ message: "If the email exists, a password reset link has been sent" });
-        }
+    const userQuery = await pool.query(
+      `SELECT id, username, email, is_verified FROM users WHERE email = $1`,
+      [email]
+    );
+
+    if (userQuery.rows.length === 0) {
+      return res.status(200).json({ message: "If the email exists, a password reset link has been sent" });
+    }
 
     const user = userQuery.rows[0];
 
-        // Check if user is verified
-        if (!user.is_verified) {
-            // User is not verified - send verification email instead
-            const verificationToken = crypto.randomBytes(32).toString("hex");
-            const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours from now
+    // Not verified: send verification email instead
+    if (!user.is_verified) {
+      const verificationToken = crypto.randomBytes(32).toString("hex");
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
-            // Delete any existing verification tokens
-            await pool.query(`DELETE FROM email_verification_tokens WHERE user_id = $1`, [user.id]);
+      await pool.query(`DELETE FROM email_verification_tokens WHERE user_id = $1`, [user.id]);
 
-            // Insert new verification token
-            await pool.query(`
-                INSERT INTO email_verification_tokens (user_id, token, expires_at) 
-                VALUES ($1, $2, $3)`,
-                [user.id, verificationToken, expiresAt]);
+      await pool.query(
+        `INSERT INTO email_verification_tokens (user_id, token, expires_at)
+         VALUES ($1, $2, $3)`,
+        [user.id, verificationToken, expiresAt]
+      );
 
-            await sendVerificationEmail(user.username, user.email, verificationToken);
-            
-            return res.status(200).json({ 
-                message: "Your email is not verified. A verification link has been sent to your email address." 
-            });
-        }
+      await sendVerificationEmail(user.username, user.email, verificationToken);
 
-        // User is verified - proceed with password reset
-        const resetToken = crypto.randomBytes(32).toString("hex");
-        const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour from now
+      return res.status(200).json({
+        message: "Your email is not verified. A verification link has been sent to your email address."
+      });
+    }
+
+    // Verified: proceed with reset
+    const resetToken = crypto.randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
 
     await deleteExistingResetTokens(user.id);
     await createPasswordResetToken(user.id, resetToken, expiresAt);
@@ -632,6 +536,9 @@ const forgotPassword = async (req, res) => {
     });
   } catch (error) {
     console.error(`Error in forgot password: ${error.message}`);
+    if (error.code === "EMAIL_SEND_FAILED" || error.code === "EMAIL_CONFIG_MISSING") {
+      return res.status(502).json({ message: "Unable to send email right now" });
+    }
     return res.status(500).json({ message: "Server Error" });
   }
 };
@@ -671,9 +578,11 @@ const resetPassword = async (req, res) => {
 
     const hashedPassword = await hashPassword(newPassword);
 
-      // Update user password and mark as verified (since they have access to email)
-      await client.query(`UPDATE users SET password_hash = $1, is_verified = TRUE, updated_at = NOW() WHERE id = $2`,
-      [hashedPassword, resetTokenData.user_id]);
+    // Update user password and mark as verified (since they have access to email)
+    await client.query(
+      `UPDATE users SET password_hash = $1, is_verified = TRUE, updated_at = NOW() WHERE id = $2`,
+      [hashedPassword, resetTokenData.user_id]
+    );
 
     await client.query(
       `UPDATE password_reset_tokens SET is_used = TRUE WHERE token = $1`,
@@ -693,11 +602,15 @@ const resetPassword = async (req, res) => {
 };
 
 const sendPasswordResetEmail = async (recipientUsername, recipientEmail, resetToken) => {
-  console.log(`Password Reset Token: ${resetToken}`);
-
   const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
 
   try {
+    if (!process.env.SENDER_EMAIL || !process.env.SENDER_PASSWORD) {
+      const err = new Error("Email credentials missing");
+      err.code = "EMAIL_CONFIG_MISSING";
+      throw err;
+    }
+
     const transporter = nodemailer.createTransport({
       service: "gmail",
       auth: {
@@ -706,7 +619,7 @@ const sendPasswordResetEmail = async (recipientUsername, recipientEmail, resetTo
       },
     });
 
-    const mailOptions = {
+    await transporter.sendMail({
       from: `Green Guardian <${process.env.SENDER_EMAIL}>`,
       to: recipientEmail,
       subject: "🔐 Green Guardian - Password Reset Request",
@@ -714,6 +627,7 @@ const sendPasswordResetEmail = async (recipientUsername, recipientEmail, resetTo
     });
   } catch (error) {
     console.error("Error sending password reset email:", error);
+    if (!error.code) error.code = "EMAIL_SEND_FAILED";
     throw error;
   }
 };
@@ -871,7 +785,6 @@ const blockUser = async (req, res) => {
         .json({ message: "Cannot block super admin users" });
     }
 
-    //  removed runtime DDL; expect migrations to ensure column exists
     const result = await runQuery(
       `UPDATE users SET is_blocked = $1, updated_at = NOW() WHERE id = $2 RETURNING id, first_name, last_name, email, role, is_blocked`,
       [isBlocked, userId]
