@@ -1,10 +1,10 @@
-// controllers/authController.js (cleaned + logical fixes)
+// controllers/authController.js 
 
 const { pool } = require("../config/db");
 require("dotenv").config();
 const crypto = require("crypto");
 const nodemailer = require("nodemailer");
-const jwt = require("jsonwebtoken"); // ✅ added
+const jwt = require("jsonwebtoken"); 
 const { generateTokens } = require("../utils/generateToken");
 const { hashPassword, comparePassword } = require("../utils/hashPassword");
 
@@ -240,7 +240,7 @@ const addAdminAndStaff = async (req, res) => {
       return res.status(400).json({ message: "Invalid email address" });
     }
 
-    // App-level duplicate checks (DB unique constraints still recommended)
+    // App-level duplicate checks (still add unique constraints at DB level)
     const dupEmail = await getUserByEmail(email);
     if (dupEmail) return res.status(400).json({ message: "Email already in use." });
     const dupPhone = await getUserByPhone(phone);
@@ -263,7 +263,7 @@ const addAdminAndStaff = async (req, res) => {
     );
     const newUser = userInsert.rows[0];
 
-    // Admin gets into society chat
+    // If admin, add to society chat
     if (role === "admin") {
       const chat = await client.query(`SELECT * FROM chat WHERE society_id = $1`, [societyId]);
       if (chat.rows.length > 0) {
@@ -271,13 +271,12 @@ const addAdminAndStaff = async (req, res) => {
         const currentParticipants = row.chatparticipants || [];
         if (!currentParticipants.includes(newUser.id)) {
           const updatedParticipants = [...currentParticipants, newUser.id];
-          await client.query(`UPDATE chat SET chatparticipants = $1 WHERE id = $2`, [
-            updatedParticipants,
-            row.id,
-          ]);
+          await client.query(
+            `UPDATE chat SET chatparticipants = $1 WHERE id = $2`,
+            [updatedParticipants, row.id]
+          );
         }
       } else {
-        // fixed column names
         await client.query(
           `INSERT INTO chat (society_id, chatparticipants, lastmessage)
            VALUES ($1, $2, $3)`,
@@ -286,7 +285,7 @@ const addAdminAndStaff = async (req, res) => {
       }
     }
 
-    // Email verification token
+    // Create verification token row
     const verificationToken = createRandomToken();
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
     await client.query(
@@ -295,21 +294,27 @@ const addAdminAndStaff = async (req, res) => {
       [newUser.id, verificationToken, expiresAt]
     );
 
-    await client.query("COMMIT");
-
     await sendVerificationEmail(username, String(email).trim(), verificationToken);
+
+    await client.query("COMMIT");
 
     return res.status(201).json({
       message: `Staff created. Email sent to verify and set password.`,
     });
   } catch (error) {
-    await client.query("ROLLBACK");
+    // If anything failed (including email), rollback so no partial user is left
+    try { await client.query("ROLLBACK"); } catch (_) {}
     console.error(`❌ Error creating user: ${error.message}`);
+    // Optional: surface clearer mail error if we know it
+    if (error.code === "EMAIL_SEND_FAILED" || error.code === "EMAIL_CONFIG_MISSING") {
+      return res.status(502).json({ error: "Unable to send verification email" });
+    }
     return res.status(500).json({ error: "Server Error" });
   } finally {
     client.release();
   }
 };
+
 
 const signIn = async (req, res) => {
   const { email, password } = req.body;
@@ -346,7 +351,7 @@ const signIn = async (req, res) => {
       is_verified: user.is_verified,
       role: user.role,
     };
-    console.log("Signin response:", response);
+    // console.log("Signin response:", response);
     return res.status(200).json(response);
   } catch (error) {
     return res
@@ -476,14 +481,13 @@ const refreshToken = async (req, res) => {
       return res.status(401).json({ message: "Invalid refresh token" });
     }
 
-    // ✅ Load real user & role
+    //  Load real user & role
     const userRes = await runQuery(`SELECT id, role FROM users WHERE id = $1`, [decoded.id]);
     if (userRes.rows.length === 0) {
       return res.status(401).json({ message: "Invalid user" });
     }
     const user = userRes.rows[0];
 
-    // ✅ Issue access token with real role, not hardcoded
     const access_token = jwt.sign(
       { id: user.id, role: user.role },
       process.env.JWT_ACCESS_SECRET,
@@ -814,7 +818,7 @@ const blockUser = async (req, res) => {
         .json({ message: "Cannot block super admin users" });
     }
 
-    // ✅ removed runtime DDL; expect migrations to ensure column exists
+    //  removed runtime DDL; expect migrations to ensure column exists
     const result = await runQuery(
       `UPDATE users SET is_blocked = $1, updated_at = NOW() WHERE id = $2 RETURNING id, first_name, last_name, email, role, is_blocked`,
       [isBlocked, userId]

@@ -249,9 +249,19 @@ const assignWorkArea = async (req, res) => {
         const { driverId, workAreaId, societyId } = req.body;
         const userRole = req.user.role;
 
+
         if (userRole !== "admin" && userRole !== "super_admin") {
             return res.status(403).json({
                 message: "You don't have permission to assign work areas",
+            });
+        }
+
+        const getDriverQuery = `SELECT * FROM users WHERE id = $1 AND role = 'driver' AND is_verified = true`;
+        const driverResult = await pool.query(getDriverQuery, [driverId]);
+
+        if (driverResult.rows.length === 0) {
+            return res.status(404).json({
+                message: "Driver not found or not verified",
             });
         }
 
@@ -433,6 +443,17 @@ const updateDriverLocation = async (req, res) => {
         if (userRole !== "driver") {
             return res.status(403).json({
                 message: "Only drivers can update their location",
+            });
+        }
+
+        const driverVerifiedQuery = `SELECT * FROM users WHERE id = $1 AND is_verified = true`;
+
+        const driverResult = await pool.query(driverVerifiedQuery, [driverId]);
+
+        if (driverResult.rows.length === 0) {
+            console.log("Driver not verified or not found");
+            return res.status(404).json({
+                message: "Driver not verified",
             });
         }
 

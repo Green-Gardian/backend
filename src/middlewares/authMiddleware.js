@@ -4,17 +4,17 @@ require("dotenv").config();
 
 const verifyToken = (req, res, next) => {
     const authHeader = req.headers["authorization"];
-    console.log("Auth header:", authHeader);
+    // console.log("Auth header:", authHeader);
 
     if (!authHeader) return res.status(401).json({ message: "No token provided" });
     const token = authHeader.split(" ")[1];
-    console.log("Extracted token:", token ? "Token exists" : "No token");
+    // console.log("Extracted token:", token ? "Token exists" : "No token");
 
     try{
         const decoded = jwt.verify(token,process.env.JWT_ACCESS_SECRET);
 
         req.user = decoded;
-        console.log("Token verified!")
+        // console.log("Token verified!")
         next();
     }
     catch (error) {
