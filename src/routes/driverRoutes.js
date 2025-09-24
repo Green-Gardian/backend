@@ -1,9 +1,10 @@
 const express = require('express');
-const { addDriver, getDrivers, updateDriver, deleteDriver , assignWorkArea , getDriverWorkAreas , getCollectionRoutes , getCurrentTasks , updateTaskStatus , updateDriverLocation , getDriverSchedule , getDriverPerformance} = require('../controllers/driverController');
+const { getDrivers, updateDriver, deleteDriver , assignWorkArea , getDriverWorkAreas , getCollectionRoutes , getCurrentTasks , updateTaskStatus , updateDriverLocation , getDriverSchedule , getDriverPerformance} = require('../controllers/driverController');
+const { addAdminAndStaff} = require('../controllers/authController');
 
 const router = express.Router();
 
-router.post('/add-driver', addDriver);
+router.post('/add-driver', addAdminAndStaff);
 router.get('/get-drivers', getDrivers);
 router.put('/update-driver/:id', updateDriver);
 router.delete('/delete-driver/:id', deleteDriver);

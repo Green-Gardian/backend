@@ -17,7 +17,7 @@ const addVehicle = async (req, res) => {
 
         if (driverName && driverName.trim() !== "") {
             const driverQuery = `
-                SELECT id, first_name, last_name, username
+                SELECT id, first_name, last_name, username, is_verified
                 FROM users WHERE username = $1
             `;
 
@@ -37,6 +37,13 @@ const addVehicle = async (req, res) => {
             }
 
             const driver = driverResult.rows[0];
+
+            if (!driver.is_verified) {
+                return res.status(400).json({
+                    message: "Driver is not verified",
+                });
+            }
+
             userId = driver.id;
             finalDriverName = `${driver.username}`;
         }
@@ -155,7 +162,7 @@ const updateVehicle = async (req, res) => {
 
             if (driverName && driverName.trim() !== "") {
                 const driverQuery = `
-                    SELECT id, first_name, last_name 
+                    SELECT id, first_name, last_name, is_verified
                     FROM users 
                     WHERE CONCAT(first_name, ' ', last_name) = $${paramCounter}
                        OR first_name = $${paramCounter}
@@ -181,6 +188,13 @@ const updateVehicle = async (req, res) => {
                 }
 
                 const driver = driverResult.rows[0];
+
+                if (!driver.is_verified) {
+                    return res.status(400).json({
+                        message: "Driver is not verified",
+                    });
+                }
+                
                 driverUserId = driver.id;
                 finalDriverName = `${driver.first_name} ${driver.last_name}`;
             }
