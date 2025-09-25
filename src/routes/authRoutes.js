@@ -10,6 +10,7 @@ const {
     changePassword,
     forgotPassword,
     resetPassword,
+    verifyOTPAndResetPassword,
     getAllUsers,
     blockUser,
     deleteUser,
@@ -26,6 +27,7 @@ router.post("/verify-email", verifyEmailAndSetPassword);
 router.post("/change-password", verifyToken, changePassword);
 router.post("/forgot-password", forgotPassword);
 router.post("/reset-password", resetPassword);
+router.post("/verify-otp-reset", verifyOTPAndResetPassword);
 
 // Super Admin Routes
 router.get("/users", verifyToken, verifySuperAdmin, getAllUsers);

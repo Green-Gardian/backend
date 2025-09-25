@@ -125,6 +125,11 @@ const resetEmailHTML = (recipientUsername, resetLink) => `
  * Controllers
  * ---------------------------------- */
 
+// Generate 6-digit OTP
+const generateOTP = () => {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+};
+
 const addAdminAndStaff = async (req, res) => {
   const client = await pool.connect();
   try {
@@ -486,54 +491,76 @@ const changePassword = async (req, res) => {
 
 const forgotPassword = async (req, res) => {
   try {
-    const { email } = req.body;
+    const { email, client_type = 'web' } = req.body;
 
     if (!email) return res.status(400).json({ message: "Email is required" });
+    
     if (!isEmailValid(email)) return res.status(400).json({ message: "Invalid email address" });
 
-    const userQuery = await pool.query(
-      `SELECT id, username, email, is_verified FROM users WHERE email = $1`,
-      [email]
-    );
+    if (!['web', 'mobile'].includes(client_type)) {
+      return res.status(400).json({ message: "Invalid client_type. Must be 'web' or 'mobile'" });
+    }
 
+    const userQuery = await pool.query(`SELECT id, username, email, is_verified FROM users WHERE email = $1`, [email]);
+    
     if (userQuery.rows.length === 0) {
-      return res.status(200).json({ message: "If the email exists, a password reset link has been sent" });
+        return res.status(200).json({ message: "If the email exists, a password reset link has been sent" });
     }
 
     const user = userQuery.rows[0];
 
-    // Not verified: send verification email instead
     if (!user.is_verified) {
-      const verificationToken = crypto.randomBytes(32).toString("hex");
-      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+        const verificationToken = crypto.randomBytes(32).toString("hex");
+        const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); 
 
-      await pool.query(`DELETE FROM email_verification_tokens WHERE user_id = $1`, [user.id]);
+        await pool.query(`DELETE FROM email_verification_tokens WHERE user_id = $1`, [user.id]);
 
-      await pool.query(
-        `INSERT INTO email_verification_tokens (user_id, token, expires_at)
-         VALUES ($1, $2, $3)`,
-        [user.id, verificationToken, expiresAt]
-      );
+        await pool.query(`
+            INSERT INTO email_verification_tokens (user_id, token, expires_at) 
+            VALUES ($1, $2, $3)`,
+            [user.id, verificationToken, expiresAt]);
 
-      await sendVerificationEmail(user.username, user.email, verificationToken);
-
-      return res.status(200).json({
-        message: "Your email is not verified. A verification link has been sent to your email address."
-      });
+        await sendVerificationEmail(user.username, user.email, verificationToken);
+        
+        return res.status(200).json({ 
+            message: "Your email is not verified. A verification link has been sent to your email address." 
+        });
     }
 
-    // Verified: proceed with reset
-    const resetToken = crypto.randomBytes(32).toString("hex");
-    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+    if (client_type === 'mobile') {
+        const otp = generateOTP();
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1000); 
 
-    await deleteExistingResetTokens(user.id);
-    await createPasswordResetToken(user.id, resetToken, expiresAt);
+        await pool.query(`DELETE FROM password_reset_otps WHERE user_id = $1`, [user.id]);
 
-    await sendPasswordResetEmail(user.username, user.email, resetToken);
+        await pool.query(`
+            INSERT INTO password_reset_otps (user_id, otp, expires_at) 
+            VALUES ($1, $2, $3)`,
+            [user.id, otp, expiresAt]);
 
-    return res.status(200).json({
-      message: "If the email exists, a password reset link has been sent",
-    });
+        await sendPasswordResetOTPEmail(user.username, user.email, otp);
+
+        return res.status(200).json({
+            message: "If the email exists, a password reset OTP has been sent",
+        });
+    } else {
+
+        const resetToken = crypto.randomBytes(32).toString("hex");
+        const expiresAt = new Date(Date.now() + 60 * 60 * 1000); 
+
+        await pool.query(`DELETE FROM password_reset_tokens WHERE user_id = $1`, [user.id]);
+
+        await pool.query(`
+            INSERT INTO password_reset_tokens (user_id, token, expires_at) 
+            VALUES ($1, $2, $3)`,
+            [user.id, resetToken, expiresAt]);
+
+        await sendPasswordResetEmail(user.username, user.email, resetToken);
+
+        return res.status(200).json({
+            message: "If the email exists, a password reset link has been sent",
+        });
+    }
   } catch (error) {
     console.error(`Error in forgot password: ${error.message}`);
     if (error.code === "EMAIL_SEND_FAILED" || error.code === "EMAIL_CONFIG_MISSING") {
@@ -629,6 +656,201 @@ const sendPasswordResetEmail = async (recipientUsername, recipientEmail, resetTo
     console.error("Error sending password reset email:", error);
     if (!error.code) error.code = "EMAIL_SEND_FAILED";
     throw error;
+  }
+};
+
+const sendPasswordResetOTPEmail = async (
+  recipientUsername,
+  recipientEmail,
+  otp
+) => {
+  console.log(`Password Reset OTP: ${otp}`);
+
+  try {
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: process.env.SENDER_EMAIL,
+        pass: process.env.SENDER_PASSWORD,
+      },
+    });
+
+    const mailOptions = {
+      from: `Green Guardian <${process.env.SENDER_EMAIL}>`,
+      to: recipientEmail,
+      subject: "🔐 Green Guardian - Password Reset OTP",
+      html: `
+                <!DOCTYPE html>
+                <html lang="en">
+                <head>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <title>Password Reset OTP</title>
+                </head>
+                <body style="margin: 0; padding: 0; font-family: 'Arial', sans-serif; background-color: #f4f7f5;">
+                    <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; box-shadow: 0 4px 10px rgba(0,0,0,0.1);">
+                        
+                        <!-- Header -->
+                        <div style="background: linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%); padding: 40px 20px; text-align: center;">
+                            <div style="background-color: white; width: 80px; height: 80px; border-radius: 50%; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+                                <span style="font-size: 40px;">🔐</span>
+                            </div>
+                            <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: bold;">Green Guardian</h1>
+                            <p style="color: #e8f5e8; margin: 10px 0 0 0; font-size: 16px;">Password Reset OTP</p>
+                        </div>
+
+                        <!-- Content -->
+                        <div style="padding: 40px 30px;">
+                            <h2 style="color: #2E7D32; margin-bottom: 20px; font-size: 24px;">Hello ${recipientUsername}! 👋</h2>
+                            
+                            <p style="color: #555555; line-height: 1.6; font-size: 16px; margin-bottom: 25px;">
+                                We received a request to reset your password for your Green Guardian mobile app. Use the OTP below to proceed with password reset.
+                            </p>
+
+                            <div style="background-color: #f8fff9; border-left: 4px solid #4CAF50; padding: 20px; margin: 25px 0; border-radius: 4px;">
+                                <h3 style="color: #2E7D32; margin: 0 0 15px 0; font-size: 18px;">🔢 Your Password Reset OTP</h3>
+                                <p style="color: #666666; margin: 0; line-height: 1.5;">
+                                    Enter this 6-digit code in your mobile app to reset your password:
+                                </p>
+                            </div>
+
+                            <!-- OTP Display -->
+                            <div style="text-align: center; margin: 35px 0;">
+                                <div style="background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%); 
+                                            color: #ffffff; 
+                                            padding: 20px 40px; 
+                                            border-radius: 15px; 
+                                            font-weight: bold; 
+                                            font-size: 32px; 
+                                            display: inline-block;
+                                            box-shadow: 0 4px 15px rgba(76, 175, 80, 0.3);
+                                            letter-spacing: 8px;">
+                                    ${otp}
+                                </div>
+                            </div>
+
+                            <div style="background-color: #fff3cd; border: 1px solid #ffeaa7; border-radius: 6px; padding: 15px; margin: 30px 0;">
+                                <p style="color: #856404; margin: 0; font-size: 14px; text-align: center;">
+                                    ⏰ This OTP will expire in 10 minutes for security purposes.
+                                </p>
+                            </div>
+
+                            <div style="background-color: #f8d7da; border: 1px solid #f5c6cb; border-radius: 6px; padding: 15px; margin: 30px 0;">
+                                <p style="color: #721c24; margin: 0; font-size: 14px; text-align: center;">
+                                    🔒 If you didn't request this password reset, please ignore this email and contact support.
+                                </p>
+                            </div>
+                        </div>
+
+                        <!-- Footer -->
+                        <div style="background-color: #f8fff9; padding: 30px; text-align: center; border-top: 1px solid #e8f5e8;">
+                            <div style="margin-bottom: 20px;">
+                                <span style="font-size: 24px; margin: 0 5px;">🔐</span>
+                                <span style="font-size: 24px; margin: 0 5px;">🌱</span>
+                                <span style="font-size: 24px; margin: 0 5px;">📱</span>
+                            </div>
+                            
+                            <p style="color: #2E7D32; margin: 0 0 10px 0; font-weight: bold; font-size: 16px;">
+                                Secure Mobile Experience!
+                            </p>
+                            
+                            <p style="color: #666666; font-size: 14px; margin: 0 0 15px 0; line-height: 1.4;">
+                                This OTP is specifically for your mobile app password reset.
+                            </p>
+                            
+                            <p style="color: #888888; font-size: 12px; margin: 0;">
+                                This email was sent from Green Guardian. If you didn't request a password reset, please ignore this email.
+                            </p>
+                            
+                            <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e8f5e8;">
+                                <p style="color: #aaaaaa; font-size: 11px; margin: 0;">
+                                    © 2025 Green Guardian. All rights reserved.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </body>
+                </html>
+            `,
+    };
+
+    const result = await transporter.sendMail(mailOptions);
+    console.log("Password reset OTP email sent successfully:", result.response);
+    return result;
+  } catch (error) {
+    console.error("Error sending password reset OTP email:", error);
+    throw error;
+  }
+};
+
+const verifyOTPAndResetPassword = async (req, res) => {
+  try {
+    const { email, otp, newPassword, confirmPassword } = req.body;
+
+    if (!email || !otp || !newPassword || !confirmPassword) {
+      return res.status(400).json({ message: "All fields are required" });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({ message: "Passwords do not match" });
+    }
+
+    if (newPassword.length < 6) {
+      return res
+        .status(400)
+        .json({ message: "Password must be at least 6 characters long" });
+    }
+
+    // Verify OTP and get user
+    const otpQuery = await pool.query(
+      `
+            SELECT o.*, u.id as user_id, u.email, u.username
+            FROM password_reset_otps o
+            JOIN users u ON o.user_id = u.id
+            WHERE u.email = $1 AND o.otp = $2 AND o.is_used = FALSE AND o.expires_at > NOW()`,
+      [email, otp]
+    );
+
+    if (otpQuery.rows.length === 0) {
+      return res
+        .status(400)
+        .json({ message: "Invalid or expired OTP" });
+    }
+
+    const otpData = otpQuery.rows[0];
+
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      // Hash new password
+      const hashedPassword = await hashPassword(newPassword);
+
+      // Update user password and mark as verified (since they have access to email)
+      await client.query(
+        `UPDATE users SET password_hash = $1, is_verified = TRUE, updated_at = NOW() WHERE id = $2`,
+        [hashedPassword, otpData.user_id]
+      );
+
+      // Mark OTP as used
+      await client.query(
+        `UPDATE password_reset_otps SET is_used = TRUE WHERE id = $1`,
+        [otpData.id]
+      );
+
+      await client.query("COMMIT");
+
+      return res.status(200).json({ message: "Password reset successfully" });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    console.error(`Error verifying OTP and resetting password: ${error.message}`);
+    return res.status(500).json({ message: "Server Error" });
   }
 };
 
@@ -931,6 +1153,7 @@ module.exports = {
   changePassword,
   forgotPassword,
   resetPassword,
+  verifyOTPAndResetPassword,
   getAllUsers,
   blockUser,
   deleteUser,
