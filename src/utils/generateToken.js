@@ -2,13 +2,13 @@ const jwt = require('jsonwebtoken');
 
 /**
  * Generate access and refresh tokens for a user
- * @param {Object} user - User object with id, role, and username
+ * @param {Object} user - User object with id, role, username, and society_id
  * @returns {Object} - Object containing access_token and refresh_token
  */
 const generateTokens = (user) => {
   try {
     const access_token = jwt.sign(
-      { id: user.id, role: user.role, username: user.username },
+      { id: user.id, role: user.role, username: user.username, society_id: user.society_id },
       process.env.JWT_ACCESS_SECRET,
       {
         expiresIn: process.env.JWT_ACCESS_EXPIRY,
@@ -32,13 +32,13 @@ const generateTokens = (user) => {
 
 /**
  * Generate only access token
- * @param {Object} user - User object with id, role, and username
+ * @param {Object} user - User object with id, role, username, and society_id
  * @returns {string} - Access token
  */
 const generateAccessToken = (user) => {
   try {
     return jwt.sign(
-      { id: user.id, role: user.role, username: user.username },
+      { id: user.id, role: user.role, username: user.username, society_id: user.society_id },
       process.env.JWT_ACCESS_SECRET,
       {
         expiresIn: process.env.JWT_ACCESS_EXPIRY,

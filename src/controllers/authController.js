@@ -8,9 +8,6 @@ const jwt = require("jsonwebtoken");
 const { generateTokens } = require("../utils/generateToken");
 const { hashPassword, comparePassword } = require("../utils/hashPassword");
 
-/* -------------------------------------------------------
- * Shared constants & helpers
- * ----------------------------------------------------- */
 
 const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 const isEmailValid = (email) => EMAIL_REGEX.test(String(email || "").trim());
@@ -39,9 +36,6 @@ const getUserByPhone = async (phone) => {
 
 const createRandomToken = () => crypto.randomBytes(32).toString("hex");
 
-/* -------------------------------
- * Email templates
- * ----------------------------- */
 
 
 const verificationEmailHTML = (recipientUsername, verificationLink) => `
@@ -121,34 +115,52 @@ const resetEmailHTML = (recipientUsername, resetLink) => `
 `;
 
 
-/* ------------------------------------
- * Controllers
- * ---------------------------------- */
-
-// Generate 6-digit OTP
-const generateOTP = () => {
-  return Math.floor(100000 + Math.random() * 900000).toString();
-};
 
 const addAdminAndStaff = async (req, res) => {
   const client = await pool.connect();
   try {
     const { firstName, lastName, phone, role, email, societyId } = req.body;
+    const currentUser = req.user;
 
     const need = requireAll({ firstName, lastName, phone, role, email });
     if (!need.ok) return res.status(400).json({ message: "All fields are required" });
 
-    if (role !== "super_admin" && !societyId) {
-      return res
-        .status(400)
-        .json({ message: "Society ID is required for non-super admin roles" });
+    // Determine the society ID based on user role
+    let finalSocietyId = societyId;
+    
+    if (role !== "super_admin") {
+      if (currentUser.role === 'admin') {
+        // Admin users can only add staff to their own society
+        finalSocietyId = currentUser.society_id;
+        
+        // If society_id is not in token, fetch it from database
+        if (!finalSocietyId) {
+          const userQuery = await runQuery(`SELECT society_id FROM users WHERE id = $1`, [currentUser.id]);
+          if (userQuery.rows.length > 0) {
+            finalSocietyId = userQuery.rows[0].society_id;
+          }
+        }
+        
+        // If still no society_id, return error
+        if (!finalSocietyId) {
+          return res.status(400).json({ message: "Admin user must be associated with a society" });
+        }
+      } else if (currentUser.role === 'super_admin') {
+        // Super admin can choose society, but it's required
+        if (!societyId) {
+          return res.status(400).json({ message: "Society ID is required for non-super admin roles" });
+        }
+        finalSocietyId = societyId;
+      } else {
+        return res.status(403).json({ message: "Unauthorized to add staff" });
+      }
     }
 
     if (!isEmailValid(email)) {
       return res.status(400).json({ message: "Invalid email address" });
     }
 
-    // App-level duplicate checks (still add unique constraints at DB level)
+    // App-level duplicate checks
     const dupEmail = await getUserByEmail(email);
     if (dupEmail) return res.status(400).json({ message: "Email already in use." });
     const dupPhone = await getUserByPhone(phone);
@@ -167,13 +179,13 @@ const addAdminAndStaff = async (req, res) => {
            VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
       role === "super_admin"
         ? [firstName.trim(), lastName.trim(), username, phone, String(email).trim(), role]
-        : [firstName.trim(), lastName.trim(), username, phone, String(email).trim(), role, societyId]
+        : [firstName.trim(), lastName.trim(), username, phone, String(email).trim(), role, finalSocietyId]
     );
     const newUser = userInsert.rows[0];
 
     // If admin, add to society chat
     if (role === "admin") {
-      const chat = await client.query(`SELECT * FROM chat WHERE society_id = $1`, [societyId]);
+      const chat = await client.query(`SELECT * FROM chat WHERE society_id = $1`, [finalSocietyId]);
       if (chat.rows.length > 0) {
         const row = chat.rows[0];
         const currentParticipants = row.chatparticipants || [];
@@ -188,7 +200,7 @@ const addAdminAndStaff = async (req, res) => {
         await client.query(
           `INSERT INTO chat (society_id, chatparticipants, lastmessage)
            VALUES ($1, $2, $3)`,
-          [societyId, [newUser.id], null]
+          [finalSocietyId, [newUser.id], null]
         );
       }
     }
@@ -866,12 +878,36 @@ const getAllUsers = async (req, res) => {
     const values = [];
     let idx = 1;
 
-    if (role && role !== "all") {
-      whereClause += `WHERE u.role = $${idx++}`;
-      values.push(role);
+    // Role-based access control
+    const currentUserRole = req.user.role;
+    const currentUserId = req.user.id;
+    const currentUserSocietyId = req.user.society_id;
+
+    // Super admin can see all users, admin can only see users from their society
+    if (currentUserRole === 'admin') {
+      const cond = `u.society_id = $${idx++} AND u.id != $${idx++}`;
+      whereClause = `WHERE ${cond}`;
+      values.push(currentUserSocietyId, currentUserId);
+    } else if (currentUserRole === 'super_admin') {
+      const cond = `u.id != $${idx++}`;
+      whereClause = `WHERE ${cond}`;
+      values.push(currentUserId);
     }
 
-    if (societyId && societyId !== "all") {
+    // Handle role filtering
+    if (role && role !== "all") {
+      // Support comma-separated roles
+      const roles = role.split(',').map(r => r.trim()).filter(r => r);
+      if (roles.length > 0) {
+        const rolePlaceholders = roles.map(() => `$${idx++}`).join(',');
+        const cond = `u.role IN (${rolePlaceholders})`;
+        whereClause = whereClause ? `${whereClause} AND ${cond}` : `WHERE ${cond}`;
+        values.push(...roles);
+      }
+    }
+
+    // Society filtering (only for super admin)
+    if (currentUserRole === 'super_admin' && societyId && societyId !== "all") {
       const cond = `u.society_id = $${idx++}`;
       whereClause = whereClause ? `${whereClause} AND ${cond}` : `WHERE ${cond}`;
       values.push(societyId);
@@ -981,17 +1017,13 @@ const getAllUsers = async (req, res) => {
   }
 };
 
-const blockUser = async (req, res) => {
+const updateUser = async (req, res) => {
   try {
     const { userId } = req.params;
-    const { isBlocked } = req.body;
+    const { firstName, lastName, phone, email, role } = req.body;
+    const currentUser = req.user;
 
-    if (typeof isBlocked !== "boolean") {
-      return res
-        .status(400)
-        .json({ message: "isBlocked must be a boolean value" });
-    }
-
+    // Check if user exists
     const userCheck = await runQuery(
       `SELECT id, role FROM users WHERE id = $1`,
       [userId]
@@ -1001,10 +1033,171 @@ const blockUser = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    if (userCheck.rows[0].role === "super_admin") {
+    const targetUser = userCheck.rows[0];
+
+    // Authorization checks
+    if (currentUser.role === 'admin') {
+      // Admin can only update users from their own society
+      const adminSocietyCheck = await runQuery(
+        `SELECT society_id FROM users WHERE id = $1`,
+        [currentUser.id]
+      );
+      
+      if (adminSocietyCheck.rows.length === 0 || !adminSocietyCheck.rows[0].society_id) {
+        return res.status(403).json({ message: "Admin must be associated with a society" });
+      }
+
+      const targetSocietyCheck = await runQuery(
+        `SELECT society_id FROM users WHERE id = $1`,
+        [userId]
+      );
+
+      if (targetSocietyCheck.rows.length === 0 || 
+          targetSocietyCheck.rows[0].society_id !== adminSocietyCheck.rows[0].society_id) {
+        return res.status(403).json({ message: "Can only update users from your society" });
+      }
+
+      // Admin cannot change roles to super_admin
+      if (role && role === 'super_admin') {
+        return res.status(403).json({ message: "Cannot assign super admin role" });
+      }
+    } else if (currentUser.role !== 'super_admin') {
+      return res.status(403).json({ message: "Unauthorized to update users" });
+    }
+
+    // Prevent updating super_admin users (except by super_admin)
+    if (targetUser.role === 'super_admin' && currentUser.role !== 'super_admin') {
+      return res.status(403).json({ message: "Cannot update super admin users" });
+    }
+
+    // Build update query dynamically
+    const fields = [];
+    const values = [];
+    let paramIndex = 1;
+
+    if (firstName !== undefined) {
+      fields.push(`first_name = $${paramIndex++}`);
+      values.push(firstName.trim());
+    }
+    if (lastName !== undefined) {
+      fields.push(`last_name = $${paramIndex++}`);
+      values.push(lastName.trim());
+    }
+    if (phone !== undefined) {
+      fields.push(`phone_number = $${paramIndex++}`);
+      values.push(phone);
+    }
+    if (email !== undefined) {
+      if (!isEmailValid(email)) {
+        return res.status(400).json({ message: "Invalid email address" });
+      }
+      
+      // Check email uniqueness (excluding current user)
+      const emailCheck = await runQuery(
+        `SELECT id FROM users WHERE email = $1 AND id != $2`,
+        [email.trim(), userId]
+      );
+      
+      if (emailCheck.rows.length > 0) {
+        return res.status(400).json({ message: "Email already in use" });
+      }
+      
+      fields.push(`email = $${paramIndex++}`);
+      values.push(email.trim());
+    }
+    if (role !== undefined) {
+      // Only super_admin can change roles
+      if (currentUser.role !== 'super_admin') {
+        return res.status(403).json({ message: "Only super admin can change user roles" });
+      }
+      
+      // Prevent changing super_admin role
+      if (targetUser.role === 'super_admin' && role !== 'super_admin') {
+        return res.status(403).json({ message: "Cannot change super admin role" });
+      }
+      
+      fields.push(`role = $${paramIndex++}`);
+      values.push(role);
+    }
+
+    if (fields.length === 0) {
+      return res.status(400).json({ message: "No fields provided for update" });
+    }
+
+    // Add updated_at and user_id
+    fields.push(`updated_at = NOW()`);
+    values.push(userId);
+
+    const updateQuery = `
+      UPDATE users 
+      SET ${fields.join(', ')} 
+      WHERE id = $${paramIndex}
+      RETURNING id, first_name, last_name, email, phone_number, role, is_verified, is_blocked, created_at, updated_at
+    `;
+
+    const result = await runQuery(updateQuery, values);
+
+    return res.status(200).json({
+      message: "User updated successfully",
+      user: result.rows[0]
+    });
+
+  } catch (error) {
+    console.error("Error updating user:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+const blockUser = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { isBlocked } = req.body;
+    const currentUser = req.user;
+
+    if (typeof isBlocked !== "boolean") {
       return res
-        .status(403)
-        .json({ message: "Cannot block super admin users" });
+        .status(400)
+        .json({ message: "isBlocked must be a boolean value" });
+    }
+
+    const userCheck = await runQuery(
+      `SELECT id, role, society_id FROM users WHERE id = $1`,
+      [userId]
+    );
+
+    if (userCheck.rows.length === 0) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const targetUser = userCheck.rows[0];
+
+    // Authorization checks
+    if (currentUser.role === 'admin') {
+      // Admin can only block users from their own society
+      const adminSocietyCheck = await runQuery(
+        `SELECT society_id FROM users WHERE id = $1`,
+        [currentUser.id]
+      );
+      
+      if (adminSocietyCheck.rows.length === 0 || !adminSocietyCheck.rows[0].society_id) {
+        return res.status(403).json({ message: "Admin must be associated with a society" });
+      }
+
+      if (targetUser.society_id !== adminSocietyCheck.rows[0].society_id) {
+        return res.status(403).json({ message: "Can only block users from your society" });
+      }
+
+      // Admin cannot block super_admin users
+      if (targetUser.role === 'super_admin') {
+        return res.status(403).json({ message: "Cannot block super admin users" });
+      }
+    } else if (currentUser.role !== 'super_admin') {
+      return res.status(403).json({ message: "Unauthorized to block users" });
+    }
+
+    // Prevent blocking super_admin users (except by super_admin)
+    if (targetUser.role === 'super_admin' && currentUser.role !== 'super_admin') {
+      return res.status(403).json({ message: "Cannot block super admin users" });
     }
 
     const result = await runQuery(
@@ -1025,9 +1218,10 @@ const blockUser = async (req, res) => {
 const deleteUser = async (req, res) => {
   try {
     const { userId } = req.params;
+    const currentUser = req.user;
 
     const userCheck = await runQuery(
-      `SELECT id, role FROM users WHERE id = $1`,
+      `SELECT id, role, society_id FROM users WHERE id = $1`,
       [userId]
     );
 
@@ -1035,10 +1229,35 @@ const deleteUser = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    if (userCheck.rows[0].role === "super_admin") {
-      return res
-        .status(403)
-        .json({ message: "Cannot delete super admin users" });
+    const targetUser = userCheck.rows[0];
+
+    // Authorization checks
+    if (currentUser.role === 'admin') {
+      // Admin can only delete users from their own society
+      const adminSocietyCheck = await runQuery(
+        `SELECT society_id FROM users WHERE id = $1`,
+        [currentUser.id]
+      );
+      
+      if (adminSocietyCheck.rows.length === 0 || !adminSocietyCheck.rows[0].society_id) {
+        return res.status(403).json({ message: "Admin must be associated with a society" });
+      }
+
+      if (targetUser.society_id !== adminSocietyCheck.rows[0].society_id) {
+        return res.status(403).json({ message: "Can only delete users from your society" });
+      }
+
+      // Admin cannot delete super_admin users
+      if (targetUser.role === 'super_admin') {
+        return res.status(403).json({ message: "Cannot delete super admin users" });
+      }
+    } else if (currentUser.role !== 'super_admin') {
+      return res.status(403).json({ message: "Unauthorized to delete users" });
+    }
+
+    // Prevent deleting super_admin users (except by super_admin)
+    if (targetUser.role === 'super_admin' && currentUser.role !== 'super_admin') {
+      return res.status(403).json({ message: "Cannot delete super admin users" });
     }
 
     await runQuery(`DELETE FROM users WHERE id = $1`, [userId]);
@@ -1155,6 +1374,7 @@ module.exports = {
   resetPassword,
   verifyOTPAndResetPassword,
   getAllUsers,
+  updateUser,
   blockUser,
   deleteUser,
   getSystemStats,

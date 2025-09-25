@@ -327,7 +327,7 @@ class AlertService {
     /**
      * Get alerts with filtering and pagination
      */
-    async getAlerts(filters = {}, page = 1, limit = 20) {
+    async getAlerts(filters = {}, page = 1, limit = 20, offset = null) {
         try {
             let query = {
                 text: `
@@ -390,9 +390,9 @@ class AlertService {
             query.text += ' ORDER BY a.created_at DESC';
 
             // Add pagination
-            const offset = (page - 1) * limit;
+            const calculatedOffset = offset !== null ? offset : (page - 1) * limit;
             query.text += ` LIMIT $${paramCounter} OFFSET $${paramCounter + 1}`;
-            query.values.push(limit, offset);
+            query.values.push(limit, calculatedOffset);
 
             const result = await pool.query(query);
             

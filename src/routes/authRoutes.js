@@ -12,6 +12,7 @@ const {
     resetPassword,
     verifyOTPAndResetPassword,
     getAllUsers,
+    updateUser,
     blockUser,
     deleteUser,
     getSystemStats
@@ -30,9 +31,10 @@ router.post("/reset-password", resetPassword);
 router.post("/verify-otp-reset", verifyOTPAndResetPassword);
 
 // Super Admin Routes
-router.get("/users", verifyToken, verifySuperAdmin, getAllUsers);
-router.patch("/users/:userId/block", verifyToken, verifySuperAdmin, blockUser);
-router.delete("/users/:userId", verifyToken, verifySuperAdmin, deleteUser);
+router.get("/users", verifyToken, verifyAdminOrSuperAdmin, getAllUsers);
+router.put("/users/:userId", verifyToken, verifyAdminOrSuperAdmin, updateUser);
+router.patch("/users/:userId/block", verifyToken, verifyAdminOrSuperAdmin, blockUser);
+router.delete("/users/:userId", verifyToken, verifyAdminOrSuperAdmin, deleteUser);
 router.get("/system-stats", verifyToken, verifySuperAdmin, getSystemStats);
 
 module.exports = router;
