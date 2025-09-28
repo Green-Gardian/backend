@@ -95,7 +95,7 @@ const getVehicles = async (req, res) => {
                 FROM vehicle v 
                 ORDER BY v.id DESC
             `;
-            params = [req.user.id];
+            // Remove params for driver role since query doesn't use parameters
         } else {
             return res.status(403).json({
                 message: "Access denied",
