@@ -5,6 +5,8 @@ const nodemailer = require("nodemailer");
 const { google } = require("googleapis");
 const { generateTokens } = require("../utils/generateToken");
 const { hashPassword, comparePassword } = require("../utils/hashPassword");
+const { get } = require("http");
+
 
 const addAdminAndStaff = async (req, res) => {
   try {
@@ -120,6 +122,119 @@ const addAdminAndStaff = async (req, res) => {
   }
 };
 
+const addResident = async (req, res) => {
+  try {
+
+    console.log("Checkpoint 1");
+    
+    const { first_name, last_name, phone_number, email } = req.body;
+    const requesterId = req.user?.id;
+    
+
+    console.log("Request Body:", req.body);
+    
+    console.log("Requester ID:", requesterId);
+
+    if (!first_name || !last_name || !phone_number || !email) {
+      return res.status(400).json({ message: "All fields are required" });
+    }
+    console.log("Checkpoint 2");
+
+    // Validate email
+    const regex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    if (!regex.test(email)) {
+      return res.status(400).json({ message: "Invalid email address" });
+    }
+
+    let societyId;
+    const requester = await pool.query(
+      `SELECT id, role, society_id FROM users WHERE id = $1`,
+      [requesterId]
+    );
+
+    if (requester.rows.length === 0) {
+      return res.status(404).json({ message: "SocietyId not found" });
+    }
+
+    const requesterData = requester.rows[0];
+
+    if (requesterData.role === "super_admin") {
+      societyId = req.body.societyId;
+      if (!societyId) {
+        return res.status(400).json({ message: "Society ID is required" });
+      }
+    } else if (requesterData.role === "admin") {
+      societyId = requesterData.society_id;
+      if (!societyId) {
+        return res
+          .status(400)
+          .json({ message: "Admin has no society assigned" });
+      }
+    } else {
+      return res
+        .status(403)
+        .json({ message: "Only admins or super_admin can add residents" });
+    }
+
+    const username = email.split("@")[0];
+
+    // Check duplicate email
+    const existingUser = await pool.query(
+      `SELECT * FROM users WHERE email = $1`,
+      [email]
+    );
+    if (existingUser.rows.length > 0) {
+      return res.status(400).json({ message: "Email already in use." });
+    }
+
+    // Check duplicate phone
+    const existingPhone = await pool.query(
+      `SELECT * FROM users WHERE phone_number = $1`,
+      [phone_number]
+    );
+    if (existingPhone.rows.length > 0) {
+      return res.status(400).json({ message: "Phone number already in use." });
+    }
+
+    // Insert resident
+    const insertUser = await pool.query(
+      `INSERT INTO users (first_name, last_name, username, phone_number, email, role, society_id) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [
+        first_name,
+        last_name,
+        username,
+        phone_number,
+        email,
+        "resident",
+        societyId,
+      ]
+    );
+
+    const newUser = insertUser.rows[0];
+    console.log("✅ Created Resident:", newUser);
+
+    // Email verification token
+    const verificationToken = crypto.randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    await pool.query(
+      `INSERT INTO email_verification_tokens (user_id, token, expires_at) 
+       VALUES ($1, $2, $3)`,
+      [newUser.id, verificationToken, expiresAt]
+    );
+
+    await sendVerificationEmail(username, email, verificationToken);
+
+    return res.status(201).json({
+      message: `Resident created. Email sent to verify and set password.`,
+    });
+  } catch (error) {
+    console.error(`❌ Error creating resident: ${error.message}`);
+    return res.status(500).json({ error: "Server Error" });
+  }
+};
+
 const signIn = async (req, res) => {
   const { email, password } = req.body;
 
@@ -137,17 +252,20 @@ const signIn = async (req, res) => {
 
     const user = queryRes.rows[0];
 
-        // Check if user is blocked
-        if (user.is_blocked) {
-            return res.status(403).json({ message: "Account has been blocked. Please contact support." });
-        }
+    // Check if user is blocked
+    if (user.is_blocked) {
+      return res
+        .status(403)
+        .json({ message: "Account has been blocked. Please contact support." });
+    }
 
-        // Check if user is verified
-        if (!user.is_verified) {
-            return res.status(403).json({ 
-                message: "Please verify your email address before signing in. Check your email for a verification link." 
-            });
-        }
+    // Check if user is verified
+    if (!user.is_verified) {
+      return res.status(403).json({
+        message:
+          "Please verify your email address before signing in. Check your email for a verification link.",
+      });
+    }
 
     const match = await comparePassword(password, user.password_hash);
     if (!match) {
@@ -207,7 +325,7 @@ const sendVerificationEmail = async (
 ) => {
   // console.log(`Verification Token: ${verificationToken}`);
 
-    const verificationLink = `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}`;
+  const verificationLink = `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}`;
 
   try {
     const transporter = nodemailer.createTransport({
@@ -459,8 +577,6 @@ const listAdmins = async (req, res) => {
   }
 };
 
-// Add these functions to your authController.js
-
 const changePassword = async (req, res) => {
   try {
     const { currentPassword, newPassword, confirmNewPassword } = req.body;
@@ -517,6 +633,100 @@ const changePassword = async (req, res) => {
   }
 };
 
+const updateProfile = async (req, res) => {
+  try {
+    console.log("Update profile request body:", req.body);
+
+    const userId = req.user.id;
+    let { first_name, last_name, phone_number, email, profile_picture } =
+      req.body;
+
+    if (
+      !first_name ||
+      !last_name ||
+      !phone_number ||
+      !email ||
+      !profile_picture
+    ) {
+      return res.status(400).json({ message: "All fields  are required" });
+    }
+
+    console.log("Checkpoint 1");
+
+    const phoneCheck = await pool.query(
+      `SELECT * FROM users WHERE phone_number = $1 AND id != $2`,
+      [phone_number, userId]
+    );
+    if (phoneCheck.rows.length > 0) {
+      return res.status(400).json({ message: "Phone number already in use." });
+    }
+
+    console.log("Checkpoint 2");
+
+    //check if the email format is valid
+    const regex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    if (!regex.test(email)) {
+      return res.status(400).json({ message: "Invalid email address" });
+    }
+
+    const emailCheck = await pool.query(
+      `SELECT * FROM users WHERE email = $1 AND id != $2`,
+      [email, userId]
+    );
+
+    if (emailCheck.rows.length > 0) {
+      return res.status(400).json({ message: "Email already in use." });
+    }
+
+    console.log("Checkpoint 3");
+
+    const updateQuery = await pool.query(
+      `
+      UPDATE users 
+      SET first_name = $1, 
+          last_name = $2, 
+          phone_number = $3, 
+          email = $4,
+          profile_picture = $5,
+          updated_at = NOW()
+      WHERE id = $6
+      RETURNING id, first_name, last_name, username, phone_number, email, profile_picture, role, society_id, is_verified, is_blocked, created_at, updated_at
+      `,
+      [first_name, last_name, phone_number, email, profile_picture, userId]
+    );
+
+    console.log("Checkpoint 4");
+
+    return res.status(200).json({
+      message: "Profile updated successfully",
+      user: updateQuery.rows[0],
+    });
+  } catch (error) {
+    console.error(`Error updating profile: ${error.message}`);
+    return res.status(500).json({ message: "Server Error" });
+  }
+};
+
+const getProfileData = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const userQuery = await pool.query(
+      `SELECT id, first_name, last_name, username, phone_number, email, role,profile_picture, created_at, updated_at
+        FROM users WHERE id = $1`,
+      [userId]
+    );
+    if (userQuery.rows.length === 0) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    const user = userQuery.rows[0];
+    return res.status(200).json({ user });
+  } catch (error) {
+    console.error(`Error fetching profile data: ${error.message}`);
+    return res.status(500).json({ message: "Server Error" });
+  }
+};
+
 const forgotPassword = async (req, res) => {
   try {
     const { email } = req.body;
@@ -530,39 +740,50 @@ const forgotPassword = async (req, res) => {
       return res.status(400).json({ message: "Invalid email address" });
     }
 
-        const userQuery = await pool.query(`SELECT id, username, email, is_verified FROM users WHERE email = $1`, [email]);
-        
-        if (userQuery.rows.length === 0) {
-            return res.status(200).json({ message: "If the email exists, a password reset link has been sent" });
-        }
+    const userQuery = await pool.query(
+      `SELECT id, username, email, is_verified FROM users WHERE email = $1`,
+      [email]
+    );
+
+    if (userQuery.rows.length === 0) {
+      return res.status(200).json({
+        message: "If the email exists, a password reset link has been sent",
+      });
+    }
 
     const user = userQuery.rows[0];
 
-        // Check if user is verified
-        if (!user.is_verified) {
-            // User is not verified - send verification email instead
-            const verificationToken = crypto.randomBytes(32).toString("hex");
-            const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours from now
+    // Check if user is verified
+    if (!user.is_verified) {
+      // User is not verified - send verification email instead
+      const verificationToken = crypto.randomBytes(32).toString("hex");
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours from now
 
-            // Delete any existing verification tokens
-            await pool.query(`DELETE FROM email_verification_tokens WHERE user_id = $1`, [user.id]);
+      // Delete any existing verification tokens
+      await pool.query(
+        `DELETE FROM email_verification_tokens WHERE user_id = $1`,
+        [user.id]
+      );
 
-            // Insert new verification token
-            await pool.query(`
+      // Insert new verification token
+      await pool.query(
+        `
                 INSERT INTO email_verification_tokens (user_id, token, expires_at) 
                 VALUES ($1, $2, $3)`,
-                [user.id, verificationToken, expiresAt]);
+        [user.id, verificationToken, expiresAt]
+      );
 
-            await sendVerificationEmail(user.username, user.email, verificationToken);
-            
-            return res.status(200).json({ 
-                message: "Your email is not verified. A verification link has been sent to your email address." 
-            });
-        }
+      await sendVerificationEmail(user.username, user.email, verificationToken);
 
-        // User is verified - proceed with password reset
-        const resetToken = crypto.randomBytes(32).toString("hex");
-        const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour from now
+      return res.status(200).json({
+        message:
+          "Your email is not verified. A verification link has been sent to your email address.",
+      });
+    }
+
+    // User is verified - proceed with password reset
+    const resetToken = crypto.randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour from now
 
     await pool.query(`DELETE FROM password_reset_tokens WHERE user_id = $1`, [
       user.id,
@@ -636,8 +857,10 @@ const resetPassword = async (req, res) => {
       const hashedPassword = await hashPassword(newPassword);
 
       // Update user password and mark as verified (since they have access to email)
-      await client.query(`UPDATE users SET password_hash = $1, is_verified = TRUE, updated_at = NOW() WHERE id = $2`,
-      [hashedPassword, resetTokenData.user_id]);
+      await client.query(
+        `UPDATE users SET password_hash = $1, is_verified = TRUE, updated_at = NOW() WHERE id = $2`,
+        [hashedPassword, resetTokenData.user_id]
+      );
 
       // Mark token as used
       await client.query(
@@ -931,7 +1154,50 @@ const getAllUsers = async (req, res) => {
   }
 };
 
+//Get users based on society id
+const getUsersBySociety = async (req, res) => {
+  console.log("Get users by society request initiated");
+
+  console.log("Requesting user info:", req.user);
+
+  try {
+    const userId = req.user.id;
+
+    // First, get the society_id of the requesting user
+    const userQuery = await pool.query(
+      `SELECT society_id FROM users
+      WHERE id = $1`,
+      [userId]
+    );
+    if (userQuery.rows.length === 0) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    const societyId = userQuery.rows[0].society_id;
+
+    if (!societyId) {
+      return res
+        .status(400)
+        .json({ message: "User is not associated with any society" });
+    }
+
+    const result = await pool.query(
+      `SELECT id, first_name, last_name, username, email, phone_number, role, is_verified, is_blocked, created_at, updated_at
+
+            FROM users WHERE society_id = $1`,
+      [societyId]
+    );
+    return res.status(200).json({
+      users: result.rows,
+    });
+  } catch (error) {
+    console.error("Error fetching users by society:", error);
+    return res.status(500).json({ message: "Internal server error." });
+  }
+};
+
 const blockUser = async (req, res) => {
+  console.log("Block/Unblock user request initiated");
+
   try {
     const { userId } = req.params;
     const { isBlocked } = req.body;
@@ -1112,4 +1378,8 @@ module.exports = {
   blockUser,
   deleteUser,
   getSystemStats,
+  getProfileData,
+  updateProfile,
+  addResident,
+  getUsersBySociety,
 };
