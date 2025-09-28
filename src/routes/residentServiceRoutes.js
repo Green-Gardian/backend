@@ -30,38 +30,90 @@ const {
     sendMessage
 } = require('../controllers/residentServiceController');
 
-// // Middleware (assuming you have auth middleware)
-// const authenticateToken = require('../middleware/auth'); // Your auth middleware
+// Middleware to verify if user is a Admin
+const verifyAdmin = (req, res, next) => {
+    if (!req.user) {
+        return res.status(401).json({ 
+            success: false, 
+            message: 'Authentication required' 
+        });
+    }
+    
+    if (req.user.role !== 'admin') {
+        return res.status(403).json({ 
+            success: false, 
+            message: 'Access denied. Admin role required.' 
+        });
+    }
+    
+    next();
+};
 
-// // Apply authentication to all routes
-// router.use(authenticateToken);
 
+// Middleware to verify if user is a resident
+const verifyResident = (req, res, next) => {
+    if (!req.user) {
+        return res.status(401).json({ 
+            success: false, 
+            message: 'Authentication required' 
+        });
+    }
+    
+    if (req.user.role !== 'resident') {
+        return res.status(403).json({ 
+            success: false, 
+            message: 'Access denied. Resident role required.' 
+        });
+    }
+    
+    next();
+};
+
+// Middleware to verify if user is admin or resident
+const verifyAdminOrResident = (req, res, next) => {
+    if (!req.user) {
+        return res.status(401).json({ 
+            success: false, 
+            message: 'Authentication required' 
+        });
+    }
+    
+    const allowedRoles = ['admin', 'resident'];
+    if (!allowedRoles.includes(req.user.role)) {
+        return res.status(403).json({ 
+            success: false, 
+            message: 'Access denied. Admin or resident role required.' 
+        });
+    }
+    
+    next();
+};
 
 // ===== SERVICE TYPES ROUTES =====
-router.get('/service-types', getServiceTypes);
+router.get('/service-types', verifyAdminOrResident, getServiceTypes);
 
 // ===== USER PROFILE ROUTES =====
-router.get('/profile', getUserProfile);
-router.put('/profile', updateUserProfile);
+router.get('/profile', verifyAdminOrResident, getUserProfile);
+router.put('/profile', verifyAdminOrResident, updateUserProfile);
 
 // ===== USER ADDRESS ROUTES =====
-router.get('/addresses', getUserAddresses);
-router.post('/addresses', addUserAddress);
-router.put('/addresses/:addressId', updateUserAddress);
-router.delete('/addresses/:addressId', deleteUserAddress);
+router.get('/addresses', verifyAdminOrResident, getUserAddresses);
+router.post('/addresses', verifyAdminOrResident, addUserAddress);
+router.put('/addresses/:addressId', verifyAdminOrResident, updateUserAddress);
+router.delete('/addresses/:addressId', verifyAdmin, deleteUserAddress);
 
 // ===== SERVICE REQUEST ROUTES =====
-
-router.post('/service-requests', createServiceRequest);
-router.get('/service-requests', getUserServiceRequests);
+router.post('/service-requests', verifyResident, createServiceRequest);
+router.get('/service-requests', verifyAdminOrResident, getUserServiceRequests);
 router.get('/service-requests/:requestId', getServiceRequestById);
-router.put('/service-requests/:requestId/cancel', cancelServiceRequest);
+router.put('/service-requests/:requestId/cancel', verifyResident, cancelServiceRequest);
 
 // ===== FEEDBACK ROUTES =====
+router.post('/service-requests/:requestId/feedback', verifyResident, submitFeedback);
+router.get('/service-requests/:requestId/feedback', verifyAdminOrResident, getFeedback);
 
-router.post('/service-requests/:requestId/feedback', submitFeedback);
-router.get('/service-requests/:requestId/feedback', getFeedback);
-router.get('/service-requests/:requestId/messages', getRequestMessages);
-router.post('/service-requests/:requestId/messages', sendMessage);
+// ===== MESSAGE ROUTES =====
+router.get('/service-requests/:requestId/messages', verifyAdminOrResident, getRequestMessages);
+router.post('/service-requests/:requestId/messages', verifyAdminOrResident, sendMessage);
 
 module.exports = router;
