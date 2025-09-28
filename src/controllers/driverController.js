@@ -631,7 +631,7 @@ const getDriverSchedule = async (req, res) => {
 };
 
 module.exports = {
-  addDriver,
+//   addDriver,
   getDrivers,
   updateDriver,
   deleteDriver,
