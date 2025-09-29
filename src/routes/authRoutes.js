@@ -18,6 +18,8 @@ const {
   addResident,
   updateProfile,
   getUsersBySociety,
+  verifyOTPAndResetPassword,
+  updateUser,
 } = require("../controllers/authController");
 
 const {
