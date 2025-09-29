@@ -1,124 +1,243 @@
+// controllers/authController.js
+
 const { pool } = require("../config/db");
 require("dotenv").config();
 const crypto = require("crypto");
 const nodemailer = require("nodemailer");
-const { google } = require("googleapis");
+const jwt = require("jsonwebtoken");
 const { generateTokens } = require("../utils/generateToken");
 const { hashPassword, comparePassword } = require("../utils/hashPassword");
 const { get } = require("http");
 
 
+// Generate OTP function
+const generateOTP = () => {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+};
+
+
+const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+const isEmailValid = (email) => EMAIL_REGEX.test(String(email || "").trim());
+const getUsernameFromEmail = (email) => String(email || "").trim().split("@")[0];
+
+const requireAll = (fields) => {
+  for (const [key, val] of Object.entries(fields)) {
+    if (val === undefined || val === null || String(val).trim() === "") {
+      return { ok: false, key };
+    }
+  }
+  return { ok: true };
+};
+
+const runQuery = (text, values = []) => pool.query(text, values);
+
+const getUserByEmail = async (email) => {
+  const r = await runQuery(`SELECT * FROM users WHERE email = $1`, [String(email).trim()]);
+  return r.rows[0] || null;
+};
+
+const getUserByPhone = async (phone) => {
+  const r = await runQuery(`SELECT * FROM users WHERE phone_number = $1`, [phone]);
+  return r.rows[0] || null;
+};
+
+const createRandomToken = () => crypto.randomBytes(32).toString("hex");
+
+
+
+const verificationEmailHTML = (recipientUsername, verificationLink) => `
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Email Verification</title></head>
+<body style="margin:0;padding:0;font-family:'Arial',sans-serif;background-color:#f4f7f5;">
+<div style="max-width:600px;margin:0 auto;background-color:#ffffff;box-shadow:0 4px 10px rgba(0,0,0,0.1);">
+  <div style="background:linear-gradient(135deg,#4CAF50 0%,#2E7D32 100%);padding:40px 20px;text-align:center;">
+    <div style="background-color:white;width:80px;height:80px;border-radius:50%;margin:0 auto 20px;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 15px rgba(0,0,0,0.2);"><span style="font-size:40px;">🌱</span></div>
+    <h1 style="color:#ffffff;margin:0;font-size:28px;font-weight:bold;">Green Guardian</h1>
+    <p style="color:#e8f5e8;margin:10px 0 0 0;font-size:16px;">Your Environmental Journey Starts Here</p>
+  </div>
+  <div style="padding:40px 30px;">
+    <h2 style="color:#2E7D32;margin-bottom:20px;font-size:24px;">Hello ${recipientUsername}! 👋</h2>
+    <p style="color:#555;line-height:1.6;font-size:16px;margin-bottom:25px;">Welcome to the Green Guardian community! We're excited to have you join us in making our planet a greener, more sustainable place.</p>
+    <div style="background-color:#f8fff9;border-left:4px solid #4CAF50;padding:20px;margin:25px 0;border-radius:4px;">
+      <h3 style="color:#2E7D32;margin:0 0 15px 0;font-size:18px;">📧 Verify Your Email Address</h3>
+      <p style="color:#666;margin:0;line-height:1.5;">To complete your registration and start your eco-friendly journey, please verify your email address by clicking the button below.</p>
+    </div>
+    <div style="text-align:center;margin:35px 0;">
+      <a href="${verificationLink}" style="background:linear-gradient(135deg,#4CAF50 0%,#45a049 100%);color:#fff;text-decoration:none;padding:15px 35px;border-radius:50px;font-weight:bold;font-size:16px;display:inline-block;box-shadow:0 4px 15px rgba(76,175,80,.3);transition:all .3s ease;">✨ Verify Email & Set Password</a>
+    </div>
+    <div style="background-color:#fff3cd;border:1px solid #ffeaa7;border-radius:6px;padding:15px;margin:30px 0;">
+      <p style="color:#856404;margin:0;font-size:14px;text-align:center;">⏰ This verification link will expire in 24 hours for security purposes.</p>
+    </div>
+    <div style="border-top:1px solid #eee;padding-top:25px;margin-top:30px;">
+      <p style="color:#888;font-size:14px;line-height:1.5;margin-bottom:15px;">If the button doesn't work, copy and paste this link into your browser:</p>
+      <p style="background-color:#f8f9fa;padding:10px;border-radius:4px;word-break:break-all;font-size:13px;color:#666;margin:0;">${verificationLink}</p>
+    </div>
+  </div>
+  <div style="background-color:#f8fff9;padding:30px;text-align:center;border-top:1px solid #e8f5e8;">
+    <div style="margin-bottom:20px;"><span style="font-size:24px;margin:0 5px;">🌍</span><span style="font-size:24px;margin:0 5px;">🌿</span><span style="font-size:24px;margin:0 5px;">♻️</span></div>
+    <p style="color:#2E7D32;margin:0 0 10px 0;font-weight:bold;font-size:16px;">Together, we can make a difference!</p>
+    <p style="color:#666;font-size:14px;margin:0 0 15px 0;line-height:1.4;">Join thousands of eco-warriors already making positive environmental impact.</p>
+    <p style="color:#888;font-size:12px;margin:0;">This email was sent from Green Guardian. If you didn't create an account with us, please ignore this email.</p>
+    <div style="margin-top:20px;padding-top:20px;border-top:1px solid #e8f5e8;"><p style="color:#aaa;font-size:11px;margin:0;">© 2025 Green Guardian. All rights reserved.</p></div>
+  </div>
+</div>
+</body></html>
+`;
+
+const resetEmailHTML = (recipientUsername, resetLink) => `
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Password Reset</title></head>
+<body style="margin:0;padding:0;font-family:'Arial',sans-serif;background-color:#f4f7f5;">
+<div style="max-width:600px;margin:0 auto;background-color:#ffffff;box-shadow:0 4px 10px rgba(0,0,0,0.1);">
+  <div style="background:linear-gradient(135deg,#4CAF50 0%,#2E7D32 100%);padding:40px 20px;text-align:center;">
+    <div style="background-color:white;width:80px;height:80px;border-radius:50%;margin:0 auto 20px;display:flex;align-items:center;justify-content:center;box-shadow:0 4px 15px rgba(0,0,0,0.2);"><span style="font-size:40px;">🔐</span></div>
+    <h1 style="color:#fff;margin:0;font-size:28px;font-weight:bold;">Green Guardian</h1>
+    <p style="color:#e8f5e8;margin:10px 0 0 0;font-size:16px;">Password Reset Request</p>
+  </div>
+  <div style="padding:40px 30px;">
+    <h2 style="color:#2E7D32;margin-bottom:20px;font-size:24px;">Hello ${recipientUsername}! 👋</h2>
+    <p style="color:#555;line-height:1.6;font-size:16px;margin-bottom:25px;">We received a request to reset your password for your Green Guardian account. If you didn't make this request, you can safely ignore this email.</p>
+    <div style="background-color:#fff3cd;border-left:4px solid #ffc107;padding:20px;margin:25px 0;border-radius:4px;">
+      <h3 style="color:#856404;margin:0 0 15px 0;font-size:18px;">🔒 Reset Your Password</h3>
+      <p style="color:#856404;margin:0;line-height:1.5;">Click the button below to create a new password for your account.</p>
+    </div>
+    <div style="text-align:center;margin:35px 0;">
+      <a href="${resetLink}" style="background:linear-gradient(135deg,#4CAF50 0%,#45a049 100%);color:#fff;text-decoration:none;padding:15px 35px;border-radius:50px;font-weight:bold;font-size:16px;display:inline-block;box-shadow:0 4px 15px rgba(76,175,80,.3);transition:all .3s ease;">🔑 Reset Password</a>
+    </div>
+    <div style="background-color:#f8d7da;border:1px solid #f5c6cb;border-radius:6px;padding:15px;margin:30px 0;">
+      <p style="color:#721c24;margin:0;font-size:14px;text-align:center;">⏰ This reset link will expire in 1 hour for security purposes.</p>
+    </div>
+    <div style="border-top:1px solid #eee;padding-top:25px;margin-top:30px;">
+      <p style="color:#888;font-size:14px;line-height:1.5;margin-bottom:15px;">If the button doesn't work, copy and paste this link into your browser:</p>
+      <p style="background-color:#f8f9fa;padding:10px;border-radius:4px;word-break:break-all;font-size:13px;color:#666;margin:0;">${resetLink}</p>
+    </div>
+  </div>
+  <div style="background-color:#f8fff9;padding:30px;text-align:center;border-top:1px solid #e8f5e8;">
+    <div style="margin-bottom:20px;"><span style="font-size:24px;margin:0 5px;">🔐</span><span style="font-size:24px;margin:0 5px;">🌱</span><span style="font-size:24px;margin:0 5px;">🛡️</span></div>
+    <p style="color:#2E7D32;margin:0 0 10px 0;font-weight:bold;font-size:16px;">Your security is important to us!</p>
+    <p style="color:#666;font-size:14px;margin:0 0 15px 0;line-height:1.4;">If you didn't request this password reset, please contact our support team immediately.</p>
+    <p style="color:#888;font-size:12px;margin:0;">This email was sent from Green Guardian. If you didn't request a password reset, please ignore this email.</p>
+    <div style="margin-top:20px;padding-top:20px;border-top:1px solid #e8f5e8;"><p style="color:#aaa;font-size:11px;margin:0;">© 2025 Green Guardian. All rights reserved.</p></div>
+  </div>
+</div>
+</body></html>
+`;
+
+
+
 const addAdminAndStaff = async (req, res) => {
+  const client = await pool.connect();
   try {
     const { firstName, lastName, phone, role, email, societyId } = req.body;
+    const currentUser = req.user;
 
-    if (!firstName || !lastName || !phone || !role || !email) {
-      return res.status(400).json({ message: "All fields are required" });
-    }
+    const need = requireAll({ firstName, lastName, phone, role, email });
+    if (!need.ok) return res.status(400).json({ message: "All fields are required" });
 
-    // Validate society_id for non-super_admin roles
-    if (role !== "super_admin" && !societyId) {
-      return res
-        .status(400)
-        .json({ message: "Society ID is required for non-super admin roles" });
-    }
-
-    const username = email.split("@")[0];
-    const regex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
-
-    if (!regex.test(email)) {
-      return res.status(400).json({ message: "Invalid email address" });
-    }
-
-    // Check duplicate email
-    const resultUser = await pool.query(
-      `SELECT * FROM users WHERE email = $1`,
-      [email]
-    );
-    if (resultUser.rows.length !== 0) {
-      return res.status(400).json({ message: "Email already in use." });
-    }
-
-    // Check duplicate phone number
-    const userByPhone = await pool.query(
-      `SELECT * FROM users WHERE phone_number = $1`,
-      [phone]
-    );
-    if (userByPhone.rows.length !== 0) {
-      return res.status(400).json({ message: "Phone number already in use." });
-    }
-
-    // Insert new user
-    let insertQuery;
-    if (role === "super_admin") {
-      insertQuery = {
-        text: `INSERT INTO users (first_name, last_name, username, phone_number, email, role) 
-               VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-        values: [firstName, lastName, username, phone, email, role],
-      };
-    } else {
-      insertQuery = {
-        text: `INSERT INTO users (first_name, last_name, username, phone_number, email, role, society_id) 
-               VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-        values: [firstName, lastName, username, phone, email, role, societyId],
-      };
-    }
-
-    const createdUser = await pool.query(insertQuery);
-    const newUser = createdUser.rows[0];
-    console.log("✅ Created User:", newUser);
-
-    // If role = admin → add to society chat
-    if (role === "admin") {
-      const chat = await pool.query(
-        `SELECT * FROM chat WHERE society_id = $1`,
-        [societyId]
-      );
-
-      if (chat.rows.length > 0) {
-        const currentParticipants = chat.rows[0].chatparticipants || [];
-
-        if (!currentParticipants.includes(newUser.id)) {
-          const updatedParticipants = [...currentParticipants, newUser.id];
-
-          await pool.query(
-            `UPDATE chat SET chatparticipants = $1 WHERE id = $2`,
-            [updatedParticipants, chat.rows[0].id]
-          );
-
-          console.log(
-            `✅ Added admin ${newUser.id} to chat ${chat.rows[0].id}`
-          );
+    // Determine the society ID based on user role
+    let finalSocietyId = societyId;
+    
+    if (role !== "super_admin") {
+      if (currentUser.role === 'admin') {
+        // Admin users can only add staff to their own society
+        finalSocietyId = currentUser.society_id;
+        
+        // If society_id is not in token, fetch it from database
+        if (!finalSocietyId) {
+          const userQuery = await runQuery(`SELECT society_id FROM users WHERE id = $1`, [currentUser.id]);
+          if (userQuery.rows.length > 0) {
+            finalSocietyId = userQuery.rows[0].society_id;
+          }
         }
+        
+        // If still no society_id, return error
+        if (!finalSocietyId) {
+          return res.status(400).json({ message: "Admin user must be associated with a society" });
+        }
+      } else if (currentUser.role === 'super_admin') {
+        // Super admin can choose society, but it's required
+        if (!societyId) {
+          return res.status(400).json({ message: "Society ID is required for non-super admin roles" });
+        }
+        finalSocietyId = societyId;
       } else {
-        // If no chat exists for this society, create one
-        const newChat = await pool.query(
-          `INSERT INTO chat (societyId, chatParticipants, lastMessage) 
-           VALUES ($1, $2, $3) RETURNING *`,
-          [societyId, [newUser.id], null]
-        );
-        console.log("✅ Created new chat for society:", newChat.rows[0]);
+        return res.status(403).json({ message: "Unauthorized to add staff" });
       }
     }
 
-    // Email verification token
-    const verificationToken = crypto.randomBytes(32).toString("hex");
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hrs
+    if (!isEmailValid(email)) {
+      return res.status(400).json({ message: "Invalid email address" });
+    }
 
-    await pool.query(
-      `INSERT INTO email_verification_tokens (user_id, token, expires_at) 
+    // App-level duplicate checks
+    const dupEmail = await getUserByEmail(email);
+    if (dupEmail) return res.status(400).json({ message: "Email already in use." });
+    const dupPhone = await getUserByPhone(phone);
+    if (dupPhone) return res.status(400).json({ message: "Phone number already in use." });
+
+    const username = getUsernameFromEmail(email);
+
+    await client.query("BEGIN");
+
+    // Insert user
+    const userInsert = await client.query(
+      role === "super_admin"
+        ? `INSERT INTO users (first_name, last_name, username, phone_number, email, role)
+           VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`
+        : `INSERT INTO users (first_name, last_name, username, phone_number, email, role, society_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      role === "super_admin"
+        ? [firstName.trim(), lastName.trim(), username, phone, String(email).trim(), role]
+        : [firstName.trim(), lastName.trim(), username, phone, String(email).trim(), role, finalSocietyId]
+    );
+    const newUser = userInsert.rows[0];
+
+    // If admin, add to society chat
+    if (role === "admin") {
+      const chat = await client.query(`SELECT * FROM chat WHERE society_id = $1`, [finalSocietyId]);
+      if (chat.rows.length > 0) {
+        const row = chat.rows[0];
+        const currentParticipants = row.chatparticipants || [];
+        if (!currentParticipants.includes(newUser.id)) {
+          const updatedParticipants = [...currentParticipants, newUser.id];
+          await client.query(
+            `UPDATE chat SET chatparticipants = $1 WHERE id = $2`,
+            [updatedParticipants, row.id]
+          );
+        }
+      } else {
+        await client.query(
+          `INSERT INTO chat (society_id, chatparticipants, lastmessage)
+           VALUES ($1, $2, $3)`,
+          [finalSocietyId, [newUser.id], null]
+        );
+      }
+    }
+
+    // Create verification token row
+    const verificationToken = createRandomToken();
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await client.query(
+      `INSERT INTO email_verification_tokens (user_id, token, expires_at)
        VALUES ($1, $2, $3)`,
       [newUser.id, verificationToken, expiresAt]
     );
 
-    await sendVerificationEmail(username, email, verificationToken);
+    await sendVerificationEmail(username, String(email).trim(), verificationToken);
+
+    await client.query("COMMIT");
 
     return res.status(201).json({
       message: `Staff created. Email sent to verify and set password.`,
     });
   } catch (error) {
-    console.error(`❌ Error creating user: ${error.message}`);
+    // If anything failed (including email), rollback so no partial user is left
+    try { await client.query("ROLLBACK"); } catch (_) {}
+    console.error(` Error creating user: ${error.message}`);
+    if (error.code === "EMAIL_SEND_FAILED" || error.code === "EMAIL_CONFIG_MISSING") {
+      return res.status(502).json({ error: "Unable to send verification email" });
+    }
     return res.status(500).json({ error: "Server Error" });
+  } finally {
+    client.release();
   }
 };
 
@@ -239,31 +358,21 @@ const signIn = async (req, res) => {
   const { email, password } = req.body;
 
   try {
-    const query = {
-      text: `SELECT * FROM users WHERE email = $1`,
-      values: [email],
-    };
-
-    const queryRes = await pool.query(query);
-
+    const queryRes = await runQuery(`SELECT * FROM users WHERE email = $1`, [String(email).trim()]);
     if (queryRes.rows.length === 0) {
       return res.status(404).json({ message: "Invalid Email" });
     }
-
     const user = queryRes.rows[0];
 
     // Check if user is blocked
     if (user.is_blocked) {
-      return res
-        .status(403)
-        .json({ message: "Account has been blocked. Please contact support." });
+      return res.status(403).json({ message: "Account has been blocked. Please contact support." });
     }
 
     // Check if user is verified
     if (!user.is_verified) {
       return res.status(403).json({
-        message:
-          "Please verify your email address before signing in. Check your email for a verification link.",
+        message: "Please verify your email address before signing in. Check your email for a verification link."
       });
     }
 
@@ -273,11 +382,9 @@ const signIn = async (req, res) => {
     }
 
     const tokens = generateTokens(user);
-    // console.log("Generated tokens:", tokens);
 
-    await pool.query(
-      `INSERT INTO refresh_tokens (user_id, token, created_at) VALUES ($1, $2, CURRENT_TIMESTAMP)
-        `,
+    await runQuery(
+      `INSERT INTO refresh_tokens (user_id, token, created_at) VALUES ($1, $2, CURRENT_TIMESTAMP)`,
       [user.id, tokens.refresh_token]
     );
 
@@ -288,7 +395,7 @@ const signIn = async (req, res) => {
       is_verified: user.is_verified,
       role: user.role,
     };
-    console.log("Signin response:", response);
+
     return res.status(200).json(response);
   } catch (error) {
     return res
@@ -300,17 +407,11 @@ const signIn = async (req, res) => {
 const signOut = async (req, res) => {
   try {
     const { refresh_token } = req.body;
-
     if (!refresh_token) {
       return res.status(400).json({ message: "Refresh token is required" });
     }
 
-    await pool.query(
-      `
-            DELETE FROM refresh_tokens WHERE token = $1
-        `,
-      [refresh_token]
-    );
+    await runQuery(`DELETE FROM refresh_tokens WHERE token = $1`, [refresh_token]);
 
     return res.status(200).json({ message: "User signed out successfully" });
   } catch (error) {
@@ -318,16 +419,16 @@ const signOut = async (req, res) => {
   }
 };
 
-const sendVerificationEmail = async (
-  recipientUsername,
-  recipientEmail,
-  verificationToken
-) => {
-  // console.log(`Verification Token: ${verificationToken}`);
-
+const sendVerificationEmail = async (recipientUsername, recipientEmail, verificationToken) => {
   const verificationLink = `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}`;
 
   try {
+    if (!process.env.SENDER_EMAIL || !process.env.SENDER_PASSWORD) {
+      const err = new Error("Email credentials missing");
+      err.code = "EMAIL_CONFIG_MISSING";
+      throw err;
+    }
+
     const transporter = nodemailer.createTransport({
       service: "gmail",
       auth: {
@@ -336,241 +437,133 @@ const sendVerificationEmail = async (
       },
     });
 
-    const mailOptions = {
+    await transporter.sendMail({
       from: `Green Guardian <${process.env.SENDER_EMAIL}>`,
       to: recipientEmail,
       subject: "🌱 Welcome to Green Guardian - Verify Your Email",
-      html: `
-                <!DOCTYPE html>
-                <html lang="en">
-                <head>
-                    <meta charset="UTF-8">
-                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                    <title>Email Verification</title>
-                </head>
-                <body style="margin: 0; padding: 0; font-family: 'Arial', sans-serif; background-color: #f4f7f5;">
-                    <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; box-shadow: 0 4px 10px rgba(0,0,0,0.1);">
-                        
-                        <!-- Header -->
-                        <div style="background: linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%); padding: 40px 20px; text-align: center;">
-                            <div style="background-color: white; width: 80px; height: 80px; border-radius: 50%; margin: 0 auto 20px; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
-                                <span style="font-size: 40px;">🌱</span>
-                            </div>
-                            <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: bold;">Green Guardian</h1>
-                            <p style="color: #e8f5e8; margin: 10px 0 0 0; font-size: 16px;">Your Environmental Journey Starts Here</p>
-                        </div>
-
-                        <!-- Content -->
-                        <div style="padding: 40px 30px;">
-                            <h2 style="color: #2E7D32; margin-bottom: 20px; font-size: 24px;">Hello ${recipientUsername}! 👋</h2>
-                            
-                            <p style="color: #555555; line-height: 1.6; font-size: 16px; margin-bottom: 25px;">
-                                Welcome to the Green Guardian community! We're excited to have you join us in making our planet a greener, more sustainable place.
-                            </p>
-
-                            <div style="background-color: #f8fff9; border-left: 4px solid #4CAF50; padding: 20px; margin: 25px 0; border-radius: 4px;">
-                                <h3 style="color: #2E7D32; margin: 0 0 15px 0; font-size: 18px;">📧 Verify Your Email Address</h3>
-                                <p style="color: #666666; margin: 0; line-height: 1.5;">
-                                    To complete your registration and start your eco-friendly journey, please verify your email address by clicking the button below.
-                                </p>
-                            </div>
-
-                            <!-- CTA Button -->
-                            <div style="text-align: center; margin: 35px 0;">
-                                <a href="${verificationLink}" 
-                                   style="background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%); 
-                                          color: #ffffff; 
-                                          text-decoration: none; 
-                                          padding: 15px 35px; 
-                                          border-radius: 50px; 
-                                          font-weight: bold; 
-                                          font-size: 16px; 
-                                          display: inline-block;
-                                          box-shadow: 0 4px 15px rgba(76, 175, 80, 0.3);
-                                          transition: all 0.3s ease;">
-                                    ✨ Verify Email & Set Password
-                                </a>
-                            </div>
-
-                            <div style="background-color: #fff3cd; border: 1px solid #ffeaa7; border-radius: 6px; padding: 15px; margin: 30px 0;">
-                                <p style="color: #856404; margin: 0; font-size: 14px; text-align: center;">
-                                    ⏰ This verification link will expire in 24 hours for security purposes.
-                                </p>
-                            </div>
-
-                            <div style="border-top: 1px solid #eeeeee; padding-top: 25px; margin-top: 30px;">
-                                <p style="color: #888888; font-size: 14px; line-height: 1.5; margin-bottom: 15px;">
-                                    If the button doesn't work, copy and paste this link into your browser:
-                                </p>
-                                <p style="background-color: #f8f9fa; padding: 10px; border-radius: 4px; word-break: break-all; font-size: 13px; color: #666666; margin: 0;">
-                                    ${verificationLink}
-                                </p>
-                            </div>
-                        </div>
-
-                        <!-- Footer -->
-                        <div style="background-color: #f8fff9; padding: 30px; text-align: center; border-top: 1px solid #e8f5e8;">
-                            <div style="margin-bottom: 20px;">
-                                <span style="font-size: 24px; margin: 0 5px;">🌍</span>
-                                <span style="font-size: 24px; margin: 0 5px;">🌿</span>
-                                <span style="font-size: 24px; margin: 0 5px;">♻️</span>
-                            </div>
-                            
-                            <p style="color: #2E7D32; margin: 0 0 10px 0; font-weight: bold; font-size: 16px;">
-                                Together, we can make a difference!
-                            </p>
-                            
-                            <p style="color: #666666; font-size: 14px; margin: 0 0 15px 0; line-height: 1.4;">
-                                Join thousands of eco-warriors already making positive environmental impact.
-                            </p>
-                            
-                            <p style="color: #888888; font-size: 12px; margin: 0;">
-                                This email was sent from Green Guardian. If you didn't create an account with us, please ignore this email.
-                            </p>
-                            
-                            <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #e8f5e8;">
-                                <p style="color: #aaaaaa; font-size: 11px; margin: 0;">
-                                    © 2025 Green Guardian. All rights reserved.
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-                </body>
-                </html>
-            `,
-    };
-
-    const result = await transporter.sendMail(mailOptions);
-    console.log("Email sent successfully:", result.response);
-    return result;
+      html: verificationEmailHTML(recipientUsername, verificationLink),
+    });
   } catch (error) {
     console.error("Error sending email:", error);
+    if (!error.code) error.code = "EMAIL_SEND_FAILED";
     throw error;
   }
 };
 
 const verifyEmailAndSetPassword = async (req, res) => {
+  const client = await pool.connect();
   try {
     const token = req.query.token;
     const { password, confirmPassword } = req.body;
 
-    if (!token) {
-      return res.status(400).json({ message: "Token is required" });
-    }
-
-    if (!password) {
-      console.log(`Password field is required.`);
-      return res.status(400).json({ message: `Password field is required.` });
-    }
-
-    if (!confirmPassword) {
-      console.log(`Confirm Password field is required.`);
-      return res
-        .status(400)
-        .json({ message: `Confirm Password field is required.` });
-    }
-
-    if (password !== confirmPassword) {
-      console.log(`Passwords donot match.`);
+    if (!token) return res.status(400).json({ message: "Token is required" });
+    if (!password) return res.status(400).json({ message: `Password field is required.` });
+    if (!confirmPassword)
+      return res.status(400).json({ message: `Confirm Password field is required.` });
+    if (password !== confirmPassword)
       return res.status(400).json({ message: `Passwords donot match.` });
-    }
 
-    const tokenQuery = await pool.query(
+    // Validate token and current verification state
+    const tokenQuery = await runQuery(
       `
-            SELECT vt.*, u.id, u.is_verified
-            FROM email_verification_tokens vt
-            JOIN users u ON vt.user_id = u.id
-            WHERE vt.token = $1 AND vt.is_used = FALSE AND vt.expires_at > NOW()
-            `,
+      SELECT vt.*, u.id as uid, u.is_verified
+      FROM email_verification_tokens vt
+      JOIN users u ON vt.user_id = u.id
+      WHERE vt.token = $1 AND vt.is_used = FALSE AND vt.expires_at > NOW()
+      `,
       [token]
     );
 
     if (tokenQuery.rows.length === 0) {
-      console.log("Expired or invalid token");
       return res.status(400).json({ message: `Expired or invalid token` });
     }
 
-    if (tokenQuery.rows[0].is_verified === "TRUE") {
-      console.log(`Email Already verified.`);
+    const row = tokenQuery.rows[0];
+    if (row.is_verified === true) {
       return res.status(400).json({ message: `Email Already verified.` });
     }
 
-    const user = tokenQuery.rows[0];
-
-    const client = await pool.connect();
+    await client.query("BEGIN");
 
     const hashedPassword = await hashPassword(password);
 
-    const updatePassword = await pool.query(
-      `UPDATE users SET password_hash = $1 WHERE id = $2 RETURNING *`,
-      [hashedPassword, user.user_id]
+    const updatePassword = await client.query(
+      `UPDATE users SET password_hash = $1 WHERE id = $2 RETURNING id`,
+      [hashedPassword, row.user_id]
     );
 
     if (updatePassword.rows.length === 0) {
-      console.log(`Error updating password.`);
-      return res.status.json({ message: `Error updating password.` });
+      await client.query("ROLLBACK");
+      return res.status(500).json({ message: `Error updating password.` });
     }
 
-    try {
-      await client.query(`BEGIN`);
+    await client.query(
+      `UPDATE users SET is_verified = TRUE, updated_at = NOW() WHERE id = $1`,
+      [row.user_id]
+    );
 
-      await client.query(
-        `UPDATE users SET is_verified = TRUE , updated_at = NOW() WHERE id = $1`,
-        [user.user_id]
-      );
+    await client.query(
+      `UPDATE email_verification_tokens SET is_used = TRUE WHERE token = $1`,
+      [token]
+    );
 
-      await client.query(
-        `UPDATE email_verification_tokens SET is_used = TRUE WHERE token = $1`,
-        [token]
-      );
+    await client.query("COMMIT");
 
-      await client.query(`COMMIT`);
-
-      return res.status(200).json({
-        message: `Email successfully Verified and password is set. You can now log in. `,
-      });
-    } catch (error) {
-      await client.query(`ROLLBACK`);
-      throw error;
-    } finally {
-      await client.release();
-    }
+    return res.status(200).json({
+      message: `Email successfully Verified and password is set. You can now log in. `,
+    });
   } catch (error) {
+    await client.query("ROLLBACK");
     console.log(`Email Verification Failed`);
     return res
       .status(500)
       .json({ message: `Email Verification Failed`, error: error.message });
+  } finally {
+    client.release();
   }
 };
 
-const refreshToken = (req, res) => {
+const refreshToken = async (req, res) => {
   try {
     const { refresh_token } = req.body;
     if (!refresh_token)
       return res.status(401).json({ message: "Refresh token required" });
 
+    // ✅ Validate refresh token signature
     const decoded = jwt.verify(refresh_token, process.env.JWT_REFRESH_SECRET);
 
+    // ✅ Ensure token exists in DB (not revoked)
+    const rtRow = await runQuery(
+      `SELECT user_id FROM refresh_tokens WHERE token = $1`,
+      [refresh_token]
+    );
+    if (rtRow.rows.length === 0) {
+      return res.status(401).json({ message: "Invalid refresh token" });
+    }
+
+    //  Load real user & role
+    const userRes = await runQuery(`SELECT id, role FROM users WHERE id = $1`, [decoded.id]);
+    if (userRes.rows.length === 0) {
+      return res.status(401).json({ message: "Invalid user" });
+    }
+    const user = userRes.rows[0];
+
     const access_token = jwt.sign(
-      { id: decoded.id, role: "admin" },
+      { id: user.id, role: user.role },
       process.env.JWT_ACCESS_SECRET,
-      {
-        expiresIn: process.env.JWT_ACCESS_EXPIRY,
-      }
+      { expiresIn: process.env.JWT_ACCESS_EXPIRY }
     );
 
     return res.status(200).json({ access_token });
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    return res.status(401).json({ message: "Invalid refresh token", error: err.message });
   }
 };
 
 const listAdmins = async (req, res) => {
   try {
-    const result = await pool.query(`SELECT * FROM users WHERE role = 'admin'`);
-    return res.status(200).json({
-      admins: result.rows,
-    });
+    const result = await runQuery(`SELECT * FROM users WHERE role = 'admin'`);
+    return res.status(200).json({ admins: result.rows });
   } catch (error) {
     console.error("Error fetching admins:", error);
     return res.status(500).json({ message: "Internal server error." });
@@ -582,9 +575,8 @@ const changePassword = async (req, res) => {
     const { currentPassword, newPassword, confirmNewPassword } = req.body;
     const userId = req.user.id; // From token verification middleware
 
-    if (!currentPassword || !newPassword || !confirmNewPassword) {
-      return res.status(400).json({ message: "All fields are required" });
-    }
+    const need = requireAll({ currentPassword, newPassword, confirmNewPassword });
+    if (!need.ok) return res.status(400).json({ message: "All fields are required" });
 
     if (newPassword !== confirmNewPassword) {
       return res.status(400).json({ message: "New passwords do not match" });
@@ -596,19 +588,16 @@ const changePassword = async (req, res) => {
         .json({ message: "Password must be at least 6 characters long" });
     }
 
-    // Get user's current password hash
-    const userQuery = await pool.query(
+    const userQuery = await runQuery(
       `SELECT password_hash FROM users WHERE id = $1`,
       [userId]
     );
-
     if (userQuery.rows.length === 0) {
       return res.status(404).json({ message: "User not found" });
     }
 
     const user = userQuery.rows[0];
 
-    // Verify current password
     const isCurrentPasswordValid = await comparePassword(
       currentPassword,
       user.password_hash
@@ -617,11 +606,9 @@ const changePassword = async (req, res) => {
       return res.status(400).json({ message: "Current password is incorrect" });
     }
 
-    // Hash new password
     const hashedNewPassword = await hashPassword(newPassword);
 
-    // Update password in database
-    await pool.query(
+    await runQuery(
       `UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2`,
       [hashedNewPassword, userId]
     );
@@ -729,168 +716,180 @@ const getProfileData = async (req, res) => {
 
 const forgotPassword = async (req, res) => {
   try {
-    const { email } = req.body;
+    const { email, client_type = 'web' } = req.body;
 
-    if (!email) {
-      return res.status(400).json({ message: "Email is required" });
+    if (!email) return res.status(400).json({ message: "Email is required" });
+    
+    if (!isEmailValid(email)) return res.status(400).json({ message: "Invalid email address" });
+
+    if (!['web', 'mobile'].includes(client_type)) {
+      return res.status(400).json({ message: "Invalid client_type. Must be 'web' or 'mobile'" });
     }
 
-    const regex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
-    if (!regex.test(email)) {
-      return res.status(400).json({ message: "Invalid email address" });
-    }
-
-    const userQuery = await pool.query(
-      `SELECT id, username, email, is_verified FROM users WHERE email = $1`,
-      [email]
-    );
-
+    const userQuery = await pool.query(`SELECT id, username, email, is_verified FROM users WHERE email = $1`, [email]);
+    
     if (userQuery.rows.length === 0) {
-      return res.status(200).json({
-        message: "If the email exists, a password reset link has been sent",
-      });
+        return res.status(200).json({ message: "If the email exists, a password reset link has been sent" });
     }
 
     const user = userQuery.rows[0];
 
-    // Check if user is verified
     if (!user.is_verified) {
-      // User is not verified - send verification email instead
-      const verificationToken = crypto.randomBytes(32).toString("hex");
-      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours from now
+        const verificationToken = crypto.randomBytes(32).toString("hex");
+        const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); 
 
-      // Delete any existing verification tokens
-      await pool.query(
-        `DELETE FROM email_verification_tokens WHERE user_id = $1`,
-        [user.id]
-      );
+        await pool.query(`DELETE FROM email_verification_tokens WHERE user_id = $1`, [user.id]);
 
-      // Insert new verification token
-      await pool.query(
-        `
-                INSERT INTO email_verification_tokens (user_id, token, expires_at) 
-                VALUES ($1, $2, $3)`,
-        [user.id, verificationToken, expiresAt]
-      );
+        await pool.query(`
+            INSERT INTO email_verification_tokens (user_id, token, expires_at) 
+            VALUES ($1, $2, $3)`,
+            [user.id, verificationToken, expiresAt]);
 
-      await sendVerificationEmail(user.username, user.email, verificationToken);
-
-      return res.status(200).json({
-        message:
-          "Your email is not verified. A verification link has been sent to your email address.",
-      });
+        await sendVerificationEmail(user.username, user.email, verificationToken);
+        
+        return res.status(200).json({ 
+            message: "Your email is not verified. A verification link has been sent to your email address." 
+        });
     }
 
-    // User is verified - proceed with password reset
-    const resetToken = crypto.randomBytes(32).toString("hex");
-    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour from now
+    if (client_type === 'mobile') {
+        const otp = generateOTP();
+        const expiresAt = new Date(Date.now() + 10 * 60 * 1000); 
 
-    await pool.query(`DELETE FROM password_reset_tokens WHERE user_id = $1`, [
-      user.id,
-    ]);
+        await pool.query(`DELETE FROM password_reset_otps WHERE user_id = $1`, [user.id]);
 
-    await pool.query(
-      `
+        await pool.query(`
+            INSERT INTO password_reset_otps (user_id, otp, expires_at) 
+            VALUES ($1, $2, $3)`,
+            [user.id, otp, expiresAt]);
+
+        await sendPasswordResetOTPEmail(user.username, user.email, otp);
+
+        return res.status(200).json({
+            message: "If the email exists, a password reset OTP has been sent",
+        });
+    } else {
+
+        const resetToken = crypto.randomBytes(32).toString("hex");
+        const expiresAt = new Date(Date.now() + 60 * 60 * 1000); 
+
+        await pool.query(`DELETE FROM password_reset_tokens WHERE user_id = $1`, [user.id]);
+
+        await pool.query(`
             INSERT INTO password_reset_tokens (user_id, token, expires_at) 
             VALUES ($1, $2, $3)`,
-      [user.id, resetToken, expiresAt]
-    );
+            [user.id, resetToken, expiresAt]);
 
-    await sendPasswordResetEmail(user.username, user.email, resetToken);
+        await sendPasswordResetEmail(user.username, user.email, resetToken);
 
-    return res.status(200).json({
-      message: "If the email exists, a password reset link has been sent",
-    });
+        return res.status(200).json({
+            message: "If the email exists, a password reset link has been sent",
+        });
+    }
   } catch (error) {
     console.error(`Error in forgot password: ${error.message}`);
+    if (error.code === "EMAIL_SEND_FAILED" || error.code === "EMAIL_CONFIG_MISSING") {
+      return res.status(502).json({ message: "Unable to send email right now" });
+    }
     return res.status(500).json({ message: "Server Error" });
   }
 };
 
 const resetPassword = async (req, res) => {
+  const client = await pool.connect();
   try {
     const token = req.query.token;
     const { newPassword, confirmPassword } = req.body;
 
-    if (!token) {
-      return res.status(400).json({ message: "Reset token is required" });
-    }
-
-    if (!newPassword || !confirmPassword) {
+    if (!token) return res.status(400).json({ message: "Reset token is required" });
+    if (!newPassword || !confirmPassword)
       return res.status(400).json({ message: "All fields are required" });
-    }
-
-    if (newPassword !== confirmPassword) {
+    if (newPassword !== confirmPassword)
       return res.status(400).json({ message: "Passwords do not match" });
-    }
-
-    if (newPassword.length < 6) {
+    if (newPassword.length < 6)
       return res
         .status(400)
         .json({ message: "Password must be at least 6 characters long" });
-    }
 
-    // Verify token and get user
-    const tokenQuery = await pool.query(
+    const tokenQuery = await runQuery(
       `
-            SELECT rt.*, u.id as user_id, u.email
-            FROM password_reset_tokens rt
-            JOIN users u ON rt.user_id = u.id
-            WHERE rt.token = $1 AND rt.is_used = FALSE AND rt.expires_at > NOW()`,
+      SELECT rt.*, u.id as user_id, u.email
+      FROM password_reset_tokens rt
+      JOIN users u ON rt.user_id = u.id
+      WHERE rt.token = $1 AND rt.is_used = FALSE AND rt.expires_at > NOW()`,
       [token]
     );
 
     if (tokenQuery.rows.length === 0) {
-      return res
-        .status(400)
-        .json({ message: "Invalid or expired reset token" });
+      return res.status(400).json({ message: "Invalid or expired reset token" });
     }
 
     const resetTokenData = tokenQuery.rows[0];
 
-    const client = await pool.connect();
+    await client.query("BEGIN");
 
-    try {
-      await client.query("BEGIN");
+    const hashedPassword = await hashPassword(newPassword);
 
-      // Hash new password
-      const hashedPassword = await hashPassword(newPassword);
+    // Update user password and mark as verified (since they have access to email)
+    await client.query(
+      `UPDATE users SET password_hash = $1, is_verified = TRUE, updated_at = NOW() WHERE id = $2`,
+      [hashedPassword, resetTokenData.user_id]
+    );
 
-      // Update user password and mark as verified (since they have access to email)
-      await client.query(
-        `UPDATE users SET password_hash = $1, is_verified = TRUE, updated_at = NOW() WHERE id = $2`,
-        [hashedPassword, resetTokenData.user_id]
-      );
+    await client.query(
+      `UPDATE password_reset_tokens SET is_used = TRUE WHERE token = $1`,
+      [token]
+    );
 
-      // Mark token as used
-      await client.query(
-        `UPDATE password_reset_tokens SET is_used = TRUE WHERE token = $1`,
-        [token]
-      );
+    await client.query("COMMIT");
 
-      await client.query("COMMIT");
-
-      return res.status(200).json({ message: "Password reset successfully" });
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    return res.status(200).json({ message: "Password reset successfully" });
   } catch (error) {
+    await client.query("ROLLBACK");
     console.error(`Error resetting password: ${error.message}`);
     return res.status(500).json({ message: "Server Error" });
+  } finally {
+    client.release();
   }
 };
 
-const sendPasswordResetEmail = async (
+const sendPasswordResetEmail = async (recipientUsername, recipientEmail, resetToken) => {
+  const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
+
+  try {
+    if (!process.env.SENDER_EMAIL || !process.env.SENDER_PASSWORD) {
+      const err = new Error("Email credentials missing");
+      err.code = "EMAIL_CONFIG_MISSING";
+      throw err;
+    }
+
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: process.env.SENDER_EMAIL,
+        pass: process.env.SENDER_PASSWORD,
+      },
+    });
+
+    await transporter.sendMail({
+      from: `Green Guardian <${process.env.SENDER_EMAIL}>`,
+      to: recipientEmail,
+      subject: "🔐 Green Guardian - Password Reset Request",
+      html: resetEmailHTML(recipientUsername, resetLink),
+    });
+  } catch (error) {
+    console.error("Error sending password reset email:", error);
+    if (!error.code) error.code = "EMAIL_SEND_FAILED";
+    throw error;
+  }
+};
+
+const sendPasswordResetOTPEmail = async (
   recipientUsername,
   recipientEmail,
-  resetToken
+  otp
 ) => {
-  console.log(`Password Reset Token: ${resetToken}`);
-
-  const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
+  console.log(`Password Reset OTP: ${otp}`);
 
   try {
     const transporter = nodemailer.createTransport({
@@ -904,14 +903,14 @@ const sendPasswordResetEmail = async (
     const mailOptions = {
       from: `Green Guardian <${process.env.SENDER_EMAIL}>`,
       to: recipientEmail,
-      subject: "🔐 Green Guardian - Password Reset Request",
+      subject: "🔐 Green Guardian - Password Reset OTP",
       html: `
                 <!DOCTYPE html>
                 <html lang="en">
                 <head>
                     <meta charset="UTF-8">
                     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                    <title>Password Reset</title>
+                    <title>Password Reset OTP</title>
                 </head>
                 <body style="margin: 0; padding: 0; font-family: 'Arial', sans-serif; background-color: #f4f7f5;">
                     <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; box-shadow: 0 4px 10px rgba(0,0,0,0.1);">
@@ -922,7 +921,7 @@ const sendPasswordResetEmail = async (
                                 <span style="font-size: 40px;">🔐</span>
                             </div>
                             <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: bold;">Green Guardian</h1>
-                            <p style="color: #e8f5e8; margin: 10px 0 0 0; font-size: 16px;">Password Reset Request</p>
+                            <p style="color: #e8f5e8; margin: 10px 0 0 0; font-size: 16px;">Password Reset OTP</p>
                         </div>
 
                         <!-- Content -->
@@ -930,45 +929,40 @@ const sendPasswordResetEmail = async (
                             <h2 style="color: #2E7D32; margin-bottom: 20px; font-size: 24px;">Hello ${recipientUsername}! 👋</h2>
                             
                             <p style="color: #555555; line-height: 1.6; font-size: 16px; margin-bottom: 25px;">
-                                We received a request to reset your password for your Green Guardian account. If you didn't make this request, you can safely ignore this email.
+                                We received a request to reset your password for your Green Guardian mobile app. Use the OTP below to proceed with password reset.
                             </p>
 
-                            <div style="background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 20px; margin: 25px 0; border-radius: 4px;">
-                                <h3 style="color: #856404; margin: 0 0 15px 0; font-size: 18px;">🔒 Reset Your Password</h3>
-                                <p style="color: #856404; margin: 0; line-height: 1.5;">
-                                    Click the button below to create a new password for your account.
+                            <div style="background-color: #f8fff9; border-left: 4px solid #4CAF50; padding: 20px; margin: 25px 0; border-radius: 4px;">
+                                <h3 style="color: #2E7D32; margin: 0 0 15px 0; font-size: 18px;">🔢 Your Password Reset OTP</h3>
+                                <p style="color: #666666; margin: 0; line-height: 1.5;">
+                                    Enter this 6-digit code in your mobile app to reset your password:
                                 </p>
                             </div>
 
-                            <!-- CTA Button -->
+                            <!-- OTP Display -->
                             <div style="text-align: center; margin: 35px 0;">
-                                <a href="${resetLink}" 
-                                   style="background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%); 
-                                          color: #ffffff; 
-                                          text-decoration: none; 
-                                          padding: 15px 35px; 
-                                          border-radius: 50px; 
-                                          font-weight: bold; 
-                                          font-size: 16px; 
-                                          display: inline-block;
-                                          box-shadow: 0 4px 15px rgba(76, 175, 80, 0.3);
-                                          transition: all 0.3s ease;">
-                                    🔑 Reset Password
-                                </a>
+                                <div style="background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%); 
+                                            color: #ffffff; 
+                                            padding: 20px 40px; 
+                                            border-radius: 15px; 
+                                            font-weight: bold; 
+                                            font-size: 32px; 
+                                            display: inline-block;
+                                            box-shadow: 0 4px 15px rgba(76, 175, 80, 0.3);
+                                            letter-spacing: 8px;">
+                                    ${otp}
+                                </div>
+                            </div>
+
+                            <div style="background-color: #fff3cd; border: 1px solid #ffeaa7; border-radius: 6px; padding: 15px; margin: 30px 0;">
+                                <p style="color: #856404; margin: 0; font-size: 14px; text-align: center;">
+                                    ⏰ This OTP will expire in 10 minutes for security purposes.
+                                </p>
                             </div>
 
                             <div style="background-color: #f8d7da; border: 1px solid #f5c6cb; border-radius: 6px; padding: 15px; margin: 30px 0;">
                                 <p style="color: #721c24; margin: 0; font-size: 14px; text-align: center;">
-                                    ⏰ This reset link will expire in 1 hour for security purposes.
-                                </p>
-                            </div>
-
-                            <div style="border-top: 1px solid #eeeeee; padding-top: 25px; margin-top: 30px;">
-                                <p style="color: #888888; font-size: 14px; line-height: 1.5; margin-bottom: 15px;">
-                                    If the button doesn't work, copy and paste this link into your browser:
-                                </p>
-                                <p style="background-color: #f8f9fa; padding: 10px; border-radius: 4px; word-break: break-all; font-size: 13px; color: #666666; margin: 0;">
-                                    ${resetLink}
+                                    🔒 If you didn't request this password reset, please ignore this email and contact support.
                                 </p>
                             </div>
                         </div>
@@ -978,15 +972,15 @@ const sendPasswordResetEmail = async (
                             <div style="margin-bottom: 20px;">
                                 <span style="font-size: 24px; margin: 0 5px;">🔐</span>
                                 <span style="font-size: 24px; margin: 0 5px;">🌱</span>
-                                <span style="font-size: 24px; margin: 0 5px;">🛡️</span>
+                                <span style="font-size: 24px; margin: 0 5px;">📱</span>
                             </div>
                             
                             <p style="color: #2E7D32; margin: 0 0 10px 0; font-weight: bold; font-size: 16px;">
-                                Your security is important to us!
+                                Secure Mobile Experience!
                             </p>
                             
                             <p style="color: #666666; font-size: 14px; margin: 0 0 15px 0; line-height: 1.4;">
-                                If you didn't request this password reset, please contact our support team immediately.
+                                This OTP is specifically for your mobile app password reset.
                             </p>
                             
                             <p style="color: #888888; font-size: 12px; margin: 0;">
@@ -1006,91 +1000,173 @@ const sendPasswordResetEmail = async (
     };
 
     const result = await transporter.sendMail(mailOptions);
-    console.log("Password reset email sent successfully:", result.response);
+    console.log("Password reset OTP email sent successfully:", result.response);
     return result;
   } catch (error) {
-    console.error("Error sending password reset email:", error);
+    console.error("Error sending password reset OTP email:", error);
     throw error;
+  }
+};
+
+const verifyOTPAndResetPassword = async (req, res) => {
+  try {
+    const { email, otp, newPassword, confirmPassword } = req.body;
+
+    if (!email || !otp || !newPassword || !confirmPassword) {
+      return res.status(400).json({ message: "All fields are required" });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({ message: "Passwords do not match" });
+    }
+
+    if (newPassword.length < 6) {
+      return res
+        .status(400)
+        .json({ message: "Password must be at least 6 characters long" });
+    }
+
+    // Verify OTP and get user
+    const otpQuery = await pool.query(
+      `
+            SELECT o.*, u.id as user_id, u.email, u.username
+            FROM password_reset_otps o
+            JOIN users u ON o.user_id = u.id
+            WHERE u.email = $1 AND o.otp = $2 AND o.is_used = FALSE AND o.expires_at > NOW()`,
+      [email, otp]
+    );
+
+    if (otpQuery.rows.length === 0) {
+      return res
+        .status(400)
+        .json({ message: "Invalid or expired OTP" });
+    }
+
+    const otpData = otpQuery.rows[0];
+
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      // Hash new password
+      const hashedPassword = await hashPassword(newPassword);
+
+      // Update user password and mark as verified (since they have access to email)
+      await client.query(
+        `UPDATE users SET password_hash = $1, is_verified = TRUE, updated_at = NOW() WHERE id = $2`,
+        [hashedPassword, otpData.user_id]
+      );
+
+      // Mark OTP as used
+      await client.query(
+        `UPDATE password_reset_otps SET is_used = TRUE WHERE id = $1`,
+        [otpData.id]
+      );
+
+      await client.query("COMMIT");
+
+      return res.status(200).json({ message: "Password reset successfully" });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    console.error(`Error verifying OTP and resetting password: ${error.message}`);
+    return res.status(500).json({ message: "Server Error" });
   }
 };
 
 // Super Admin Functions
 const getAllUsers = async (req, res) => {
   try {
-    const { page = 1, limit = 10, role, search, societyId } = req.query;
+    const page = Number.parseInt(req.query.page ?? "1", 10) || 1;
+    const limit = Number.parseInt(req.query.limit ?? "10", 10) || 10;
+    const { role, search, societyId } = req.query;
     const offset = (page - 1) * limit;
 
     let whereClause = "";
-    let values = [];
-    let valueIndex = 1;
+    const values = [];
+    let idx = 1;
 
-    if (role && role !== "all") {
-      whereClause += `WHERE u.role = $${valueIndex}`;
-      values.push(role);
-      valueIndex++;
+    // Role-based access control
+    const currentUserRole = req.user.role;
+    const currentUserId = req.user.id;
+    const currentUserSocietyId = req.user.society_id;
+
+    // Super admin can see all users, admin can only see users from their society
+    if (currentUserRole === 'admin') {
+      const cond = `u.society_id = $${idx++} AND u.id != $${idx++}`;
+      whereClause = `WHERE ${cond}`;
+      values.push(currentUserSocietyId, currentUserId);
+    } else if (currentUserRole === 'super_admin') {
+      const cond = `u.id != $${idx++}`;
+      whereClause = `WHERE ${cond}`;
+      values.push(currentUserId);
     }
 
-    if (societyId && societyId !== "all") {
-      const societyCondition = `u.society_id = $${valueIndex}`;
-      if (whereClause) {
-        whereClause += ` AND ${societyCondition}`;
-      } else {
-        whereClause = `WHERE ${societyCondition}`;
+    // Handle role filtering
+    if (role && role !== "all") {
+      // Support comma-separated roles
+      const roles = role.split(',').map(r => r.trim()).filter(r => r);
+      if (roles.length > 0) {
+        const rolePlaceholders = roles.map(() => `$${idx++}`).join(',');
+        const cond = `u.role IN (${rolePlaceholders})`;
+        whereClause = whereClause ? `${whereClause} AND ${cond}` : `WHERE ${cond}`;
+        values.push(...roles);
       }
+    }
+
+    // Society filtering (only for super admin)
+    if (currentUserRole === 'super_admin' && societyId && societyId !== "all") {
+      const cond = `u.society_id = $${idx++}`;
+      whereClause = whereClause ? `${whereClause} AND ${cond}` : `WHERE ${cond}`;
       values.push(societyId);
-      valueIndex++;
     }
 
     if (search) {
-      const searchCondition = `(u.first_name ILIKE $${valueIndex} OR u.last_name ILIKE $${valueIndex} OR u.email ILIKE $${valueIndex} OR u.username ILIKE $${valueIndex})`;
-      if (whereClause) {
-        whereClause += ` AND ${searchCondition}`;
-      } else {
-        whereClause = `WHERE ${searchCondition}`;
-      }
+      const cond = `(u.first_name ILIKE $${idx} OR u.last_name ILIKE $${idx} OR u.email ILIKE $${idx} OR u.username ILIKE $${idx})`;
+      whereClause = whereClause ? `${whereClause} AND ${cond}` : `WHERE ${cond}`;
       values.push(`%${search}%`);
-      valueIndex++;
+      idx++;
     }
 
-    // Get total count
     const countQuery = `
-            SELECT COUNT(*) 
-            FROM users u 
-            LEFT JOIN societies s ON u.society_id = s.id 
-            ${whereClause}
-        `;
-    const countResult = await pool.query(countQuery, values);
-    const totalUsers = parseInt(countResult.rows[0].count);
+      SELECT COUNT(*)
+      FROM users u
+      LEFT JOIN societies s ON u.society_id = s.id
+      ${whereClause}
+    `;
+    const countResult = await runQuery(countQuery, values);
+    const totalUsers = Number.parseInt(countResult.rows[0].count, 10);
 
-    // Get users with pagination and society information
     const usersQuery = `
-            SELECT 
-                u.id, 
-                u.first_name, 
-                u.last_name, 
-                u.username, 
-                u.email, 
-                u.phone_number, 
-                u.role, 
-                u.is_verified, 
-                u.is_blocked, 
-                u.created_at, 
-                u.updated_at,
-                u.society_id,
-                s.society_name,
-                s.city,
-                s.state
-            FROM users u
-            LEFT JOIN societies s ON u.society_id = s.id
-            ${whereClause}
-            ORDER BY u.created_at DESC
-            LIMIT $${valueIndex} OFFSET $${valueIndex + 1}
-        `;
-    values.push(limit, offset);
+      SELECT
+        u.id,
+        u.first_name,
+        u.last_name,
+        u.username,
+        u.email,
+        u.phone_number,
+        u.role,
+        u.is_verified,
+        u.is_blocked,
+        u.created_at,
+        u.updated_at,
+        u.society_id,
+        s.society_name,
+        s.city,
+        s.state
+      FROM users u
+      LEFT JOIN societies s ON u.society_id = s.id
+      ${whereClause}
+      ORDER BY u.created_at DESC
+      LIMIT $${idx} OFFSET $${idx + 1}
+    `;
+    const usersResult = await runQuery(usersQuery, [...values, limit, offset]);
 
-    const usersResult = await pool.query(usersQuery, values);
-
-    // Group users by society
     const usersBySociety = {};
     const usersWithoutSociety = [];
 
@@ -1142,10 +1218,10 @@ const getAllUsers = async (req, res) => {
       usersBySociety,
       usersWithoutSociety,
       pagination: {
-        currentPage: parseInt(page),
+        currentPage: page,
         totalPages: Math.ceil(totalUsers / limit),
         totalUsers,
-        limit: parseInt(limit),
+        limit,
       },
     });
   } catch (error) {
@@ -1195,21 +1271,14 @@ const getUsersBySociety = async (req, res) => {
   }
 };
 
-const blockUser = async (req, res) => {
-  console.log("Block/Unblock user request initiated");
-
+const updateUser = async (req, res) => {
   try {
     const { userId } = req.params;
-    const { isBlocked } = req.body;
+    const { firstName, lastName, phone, email, role } = req.body;
+    const currentUser = req.user;
 
-    if (typeof isBlocked !== "boolean") {
-      return res
-        .status(400)
-        .json({ message: "isBlocked must be a boolean value" });
-    }
-
-    // First check if user exists and is not a super_admin
-    const userCheck = await pool.query(
+    // Check if user exists
+    const userCheck = await runQuery(
       `SELECT id, role FROM users WHERE id = $1`,
       [userId]
     );
@@ -1218,19 +1287,174 @@ const blockUser = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    if (userCheck.rows[0].role === "super_admin") {
-      return res
-        .status(403)
-        .json({ message: "Cannot block super admin users" });
+    const targetUser = userCheck.rows[0];
+
+    // Authorization checks
+    if (currentUser.role === 'admin') {
+      // Admin can only update users from their own society
+      const adminSocietyCheck = await runQuery(
+        `SELECT society_id FROM users WHERE id = $1`,
+        [currentUser.id]
+      );
+      
+      if (adminSocietyCheck.rows.length === 0 || !adminSocietyCheck.rows[0].society_id) {
+        return res.status(403).json({ message: "Admin must be associated with a society" });
+      }
+
+      const targetSocietyCheck = await runQuery(
+        `SELECT society_id FROM users WHERE id = $1`,
+        [userId]
+      );
+
+      if (targetSocietyCheck.rows.length === 0 || 
+          targetSocietyCheck.rows[0].society_id !== adminSocietyCheck.rows[0].society_id) {
+        return res.status(403).json({ message: "Can only update users from your society" });
+      }
+
+      // Admin cannot change roles to super_admin
+      if (role && role === 'super_admin') {
+        return res.status(403).json({ message: "Cannot assign super admin role" });
+      }
+    } else if (currentUser.role !== 'super_admin') {
+      return res.status(403).json({ message: "Unauthorized to update users" });
     }
 
-    // Add is_blocked column if it doesn't exist
-    await pool.query(`
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS is_blocked BOOLEAN DEFAULT FALSE
-        `);
+    // Prevent updating super_admin users (except by super_admin)
+    if (targetUser.role === 'super_admin' && currentUser.role !== 'super_admin') {
+      return res.status(403).json({ message: "Cannot update super admin users" });
+    }
 
-    // Update user blocked status
-    const result = await pool.query(
+    // Build update query dynamically
+    const fields = [];
+    const values = [];
+    let paramIndex = 1;
+
+    if (firstName !== undefined) {
+      fields.push(`first_name = $${paramIndex++}`);
+      values.push(firstName.trim());
+    }
+    if (lastName !== undefined) {
+      fields.push(`last_name = $${paramIndex++}`);
+      values.push(lastName.trim());
+    }
+    if (phone !== undefined) {
+      fields.push(`phone_number = $${paramIndex++}`);
+      values.push(phone);
+    }
+    if (email !== undefined) {
+      if (!isEmailValid(email)) {
+        return res.status(400).json({ message: "Invalid email address" });
+      }
+      
+      // Check email uniqueness (excluding current user)
+      const emailCheck = await runQuery(
+        `SELECT id FROM users WHERE email = $1 AND id != $2`,
+        [email.trim(), userId]
+      );
+      
+      if (emailCheck.rows.length > 0) {
+        return res.status(400).json({ message: "Email already in use" });
+      }
+      
+      fields.push(`email = $${paramIndex++}`);
+      values.push(email.trim());
+    }
+    if (role !== undefined) {
+      // Only super_admin can change roles
+      if (currentUser.role !== 'super_admin') {
+        return res.status(403).json({ message: "Only super admin can change user roles" });
+      }
+      
+      // Prevent changing super_admin role
+      if (targetUser.role === 'super_admin' && role !== 'super_admin') {
+        return res.status(403).json({ message: "Cannot change super admin role" });
+      }
+      
+      fields.push(`role = $${paramIndex++}`);
+      values.push(role);
+    }
+
+    if (fields.length === 0) {
+      return res.status(400).json({ message: "No fields provided for update" });
+    }
+
+    // Add updated_at and user_id
+    fields.push(`updated_at = NOW()`);
+    values.push(userId);
+
+    const updateQuery = `
+      UPDATE users 
+      SET ${fields.join(', ')} 
+      WHERE id = $${paramIndex}
+      RETURNING id, first_name, last_name, email, phone_number, role, is_verified, is_blocked, created_at, updated_at
+    `;
+
+    const result = await runQuery(updateQuery, values);
+
+    return res.status(200).json({
+      message: "User updated successfully",
+      user: result.rows[0]
+    });
+
+  } catch (error) {
+    console.error("Error updating user:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+const blockUser = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { isBlocked } = req.body;
+    const currentUser = req.user;
+
+    if (typeof isBlocked !== "boolean") {
+      return res
+        .status(400)
+        .json({ message: "isBlocked must be a boolean value" });
+    }
+
+    const userCheck = await runQuery(
+      `SELECT id, role, society_id FROM users WHERE id = $1`,
+      [userId]
+    );
+
+    if (userCheck.rows.length === 0) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const targetUser = userCheck.rows[0];
+
+    // Authorization checks
+    if (currentUser.role === 'admin') {
+      // Admin can only block users from their own society
+      const adminSocietyCheck = await runQuery(
+        `SELECT society_id FROM users WHERE id = $1`,
+        [currentUser.id]
+      );
+      
+      if (adminSocietyCheck.rows.length === 0 || !adminSocietyCheck.rows[0].society_id) {
+        return res.status(403).json({ message: "Admin must be associated with a society" });
+      }
+
+      if (targetUser.society_id !== adminSocietyCheck.rows[0].society_id) {
+        return res.status(403).json({ message: "Can only block users from your society" });
+      }
+
+      // Admin cannot block super_admin users
+      if (targetUser.role === 'super_admin') {
+        return res.status(403).json({ message: "Cannot block super admin users" });
+      }
+    } else if (currentUser.role !== 'super_admin') {
+      return res.status(403).json({ message: "Unauthorized to block users" });
+    }
+
+    // Prevent blocking super_admin users (except by super_admin)
+    if (targetUser.role === 'super_admin' && currentUser.role !== 'super_admin') {
+      return res.status(403).json({ message: "Cannot block super admin users" });
+    }
+
+    const result = await runQuery(
       `UPDATE users SET is_blocked = $1, updated_at = NOW() WHERE id = $2 RETURNING id, first_name, last_name, email, role, is_blocked`,
       [isBlocked, userId]
     );
@@ -1248,10 +1472,10 @@ const blockUser = async (req, res) => {
 const deleteUser = async (req, res) => {
   try {
     const { userId } = req.params;
+    const currentUser = req.user;
 
-    // First check if user exists and is not a super_admin
-    const userCheck = await pool.query(
-      `SELECT id, role FROM users WHERE id = $1`,
+    const userCheck = await runQuery(
+      `SELECT id, role, society_id FROM users WHERE id = $1`,
       [userId]
     );
 
@@ -1259,14 +1483,38 @@ const deleteUser = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    if (userCheck.rows[0].role === "super_admin") {
-      return res
-        .status(403)
-        .json({ message: "Cannot delete super admin users" });
+    const targetUser = userCheck.rows[0];
+
+    // Authorization checks
+    if (currentUser.role === 'admin') {
+      // Admin can only delete users from their own society
+      const adminSocietyCheck = await runQuery(
+        `SELECT society_id FROM users WHERE id = $1`,
+        [currentUser.id]
+      );
+      
+      if (adminSocietyCheck.rows.length === 0 || !adminSocietyCheck.rows[0].society_id) {
+        return res.status(403).json({ message: "Admin must be associated with a society" });
+      }
+
+      if (targetUser.society_id !== adminSocietyCheck.rows[0].society_id) {
+        return res.status(403).json({ message: "Can only delete users from your society" });
+      }
+
+      // Admin cannot delete super_admin users
+      if (targetUser.role === 'super_admin') {
+        return res.status(403).json({ message: "Cannot delete super admin users" });
+      }
+    } else if (currentUser.role !== 'super_admin') {
+      return res.status(403).json({ message: "Unauthorized to delete users" });
     }
 
-    // Delete user (cascade will handle related records)
-    await pool.query(`DELETE FROM users WHERE id = $1`, [userId]);
+    // Prevent deleting super_admin users (except by super_admin)
+    if (targetUser.role === 'super_admin' && currentUser.role !== 'super_admin') {
+      return res.status(403).json({ message: "Cannot delete super admin users" });
+    }
+
+    await runQuery(`DELETE FROM users WHERE id = $1`, [userId]);
 
     return res.status(200).json({
       message: "User deleted successfully",
@@ -1279,59 +1527,51 @@ const deleteUser = async (req, res) => {
 
 const getSystemStats = async (req, res) => {
   try {
-    // Get counts for different user roles
-    const userStats = await pool.query(`
-            SELECT 
-                role,
-                COUNT(*) as count,
-                COUNT(CASE WHEN is_verified = true THEN 1 END) as verified_count,
-                COUNT(CASE WHEN is_blocked = true THEN 1 END) as blocked_count
-            FROM users 
-            GROUP BY role
-        `);
+    const userStats = await runQuery(`
+      SELECT
+        role,
+        COUNT(*) as count,
+        COUNT(CASE WHEN is_verified = true THEN 1 END) as verified_count,
+        COUNT(CASE WHEN is_blocked = true THEN 1 END) as blocked_count
+      FROM users
+      GROUP BY role
+    `);
 
-    // Get society count
-    const societyCount = await pool.query(
-      `SELECT COUNT(*) as count FROM societies`
-    );
+    const societyCount = await runQuery(`SELECT COUNT(*) as count FROM societies`);
 
-    // Get recent activity (last 7 days)
-    const recentActivity = await pool.query(`
-            SELECT 
-                COUNT(*) as new_users,
-                COUNT(CASE WHEN role = 'admin' THEN 1 END) as new_admins,
-                COUNT(CASE WHEN role = 'customer_support' THEN 1 END) as new_staff
-            FROM users 
-            WHERE created_at >= NOW() - INTERVAL '7 days'
-        `);
+    const recentActivity = await runQuery(`
+      SELECT
+        COUNT(*) as new_users,
+        COUNT(CASE WHEN role = 'admin' THEN 1 END) as new_admins,
+        COUNT(CASE WHEN role = 'customer_support' THEN 1 END) as new_staff
+      FROM users
+      WHERE created_at >= NOW() - INTERVAL '7 days'
+    `);
 
-    // Get users by society
-    const usersBySociety = await pool.query(`
-            SELECT 
-                s.id,
-                s.society_name,
-                s.city,
-                s.state,
-                u.role,
-                COUNT(*) as count
-            FROM societies s
-            LEFT JOIN users u ON s.id = u.society_id
-            WHERE u.id IS NOT NULL
-            GROUP BY s.id, s.society_name, s.city, s.state, u.role
-            ORDER BY s.society_name, u.role
-        `);
+    const usersBySociety = await runQuery(`
+      SELECT
+        s.id,
+        s.society_name,
+        s.city,
+        s.state,
+        u.role,
+        COUNT(*) as count
+      FROM societies s
+      LEFT JOIN users u ON s.id = u.society_id
+      WHERE u.id IS NOT NULL
+      GROUP BY s.id, s.society_name, s.city, s.state, u.role
+      ORDER BY s.society_name, u.role
+    `);
 
-    // Get users without society
-    const usersWithoutSociety = await pool.query(`
-            SELECT 
-                role,
-                COUNT(*) as count
-            FROM users 
-            WHERE society_id IS NULL
-            GROUP BY role
-        `);
+    const usersWithoutSociety = await runQuery(`
+      SELECT
+        role,
+        COUNT(*) as count
+      FROM users
+      WHERE society_id IS NULL
+      GROUP BY role
+    `);
 
-    // Process users by society data
     const societiesWithUsers = {};
     usersBySociety.rows.forEach((row) => {
       if (!societiesWithUsers[row.id]) {
@@ -1347,16 +1587,28 @@ const getSystemStats = async (req, res) => {
       }
       societiesWithUsers[row.id].userCounts.push({
         role: row.role,
-        count: parseInt(row.count),
+        count: Number.parseInt(row.count, 10),
       });
     });
 
     return res.status(200).json({
-      userStats: userStats.rows,
-      societyCount: parseInt(societyCount.rows[0].count),
-      recentActivity: recentActivity.rows[0],
+      userStats: userStats.rows.map((r) => ({
+        role: r.role,
+        count: Number.parseInt(r.count, 10),
+        verified_count: Number.parseInt(r.verified_count, 10),
+        blocked_count: Number.parseInt(r.blocked_count, 10),
+      })),
+      societyCount: Number.parseInt(societyCount.rows[0].count, 10),
+      recentActivity: {
+        new_users: Number.parseInt(recentActivity.rows[0].new_users, 10),
+        new_admins: Number.parseInt(recentActivity.rows[0].new_admins, 10),
+        new_staff: Number.parseInt(recentActivity.rows[0].new_staff, 10),
+      },
       societiesWithUsers: Object.values(societiesWithUsers),
-      usersWithoutSociety: usersWithoutSociety.rows,
+      usersWithoutSociety: usersWithoutSociety.rows.map((r) => ({
+        role: r.role,
+        count: Number.parseInt(r.count, 10),
+      })),
     });
   } catch (error) {
     console.error("Error fetching system stats:", error);
@@ -1374,7 +1626,9 @@ module.exports = {
   changePassword,
   forgotPassword,
   resetPassword,
+  verifyOTPAndResetPassword,
   getAllUsers,
+  updateUser,
   blockUser,
   deleteUser,
   getSystemStats,

@@ -47,9 +47,13 @@ router.post("/add-resident", verifyToken, verifyAdminOrSuperAdmin, addResident);
 router.get("/get-users-by-society", verifyToken, getUsersBySociety);
 
 // Super Admin Routes
-router.get("/users", verifyToken, getAllUsers);
-router.patch("/users/:userId/block", verifyToken, blockUser);
-router.delete("/users/:userId", verifyToken, verifySuperAdmin, deleteUser);
+router.post("/verify-otp-reset", verifyOTPAndResetPassword);
+
+// Super Admin Routes
+router.get("/users", verifyToken, verifyAdminOrSuperAdmin, getAllUsers);
+router.put("/users/:userId", verifyToken, verifyAdminOrSuperAdmin, updateUser);
+router.patch("/users/:userId/block", verifyToken, verifyAdminOrSuperAdmin, blockUser);
+router.delete("/users/:userId", verifyToken, verifyAdminOrSuperAdmin, deleteUser);
 router.get("/system-stats", verifyToken, verifySuperAdmin, getSystemStats);
 
 module.exports = router;
