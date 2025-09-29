@@ -2,6 +2,7 @@ const express = require("express");
 const http = require("http");
 const cors = require("cors");
 const morgan = require("morgan");
+const bodyParser = require('body-parser');
 
 // Load environment variables
 require("dotenv").config();
@@ -34,6 +35,10 @@ app.use(cors());
 app.use(morgan("dev"));
 app.use(express.json());
 
+
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
+
 // Routes
 app.use("/auth", authRouter);
 app.use("/vehicle", verifyToken, vehicleRouter);
@@ -43,6 +48,7 @@ app.use("/driver", verifyToken, driverRouter);
 app.use("/alerts", verifyToken, alertRouter);
 app.use("/services", verifyToken, serviceRouter);
 app.use("/chat", verifyToken, chatRouter);
+
 
 // Health endpoints
 app.get("/health", (req, res) => {
