@@ -1,9 +1,6 @@
 // controllers/residentServiceController.js
 const { pool } = require("../config/db");
 
-/* -------------------------------------------------------
- * Helpers (DRY + safety)
- * ----------------------------------------------------- */
 
 /** Parse positive int safely; returns fallback for invalid input. */
 const toPosInt = (v, fb = null) => {
@@ -79,6 +76,57 @@ const getServiceTypes = async (_req, res) => {
 /* -------------------------------------------------------
  * USER PROFILE MANAGEMENT
  * ----------------------------------------------------- */
+
+const addUserProfile = async (req, res) => {
+  const userId = req.user.id;
+  const {
+    dateOfBirth,
+    gender,
+    emergencyContactName,
+    emergencyContactPhone,
+    notificationPreferences,
+    preferredCollectionTime,
+    specialInstructions,
+  } = req.body;
+
+  try {
+    const q = await run(
+      `
+        INSERT INTO user_profiles (
+          user_id,
+          date_of_birth,
+          gender,
+          emergency_contact_name,
+          emergency_contact_phone,
+          notification_preferences,
+          preferred_collection_time,
+          special_instructions
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        RETURNING *
+      `,
+      [
+        userId,
+        dateOfBirth || null,
+        gender || null,
+        emergencyContactName || null,
+        emergencyContactPhone || null,
+        notificationPreferences ? JSON.stringify(notificationPreferences) : '{"email": true, "sms": true, "push": true}',
+        preferredCollectionTime || "morning",
+        specialInstructions || null,
+      ]
+    );
+
+    return res
+      .status(201)
+      .json({ success: true, message: "Profile created successfully", profile: q.rows[0] });
+  } catch (error) {
+    return fail500(res, "Add user profile error", error);
+  }
+};
+
+module.exports = { addUserProfile };
+
 
 const getUserProfile = async (req, res) => {
   const userId = req.user.id; // From auth middleware
@@ -754,6 +802,7 @@ module.exports = {
   getServiceTypes,
 
   // Profile Management
+  addUserProfile,
   getUserProfile,
   updateUserProfile,
 

@@ -6,6 +6,7 @@ const {
     getServiceTypes,
     
     // Profile Management
+    addUserProfile,
     getUserProfile,
     updateUserProfile,
     
@@ -93,6 +94,7 @@ const verifyAdminOrResident = (req, res, next) => {
 router.get('/service-types', verifyAdminOrResident, getServiceTypes);
 
 // ===== USER PROFILE ROUTES =====
+router.post('/profile', verifyAdminOrResident, addUserProfile);
 router.get('/profile', verifyAdminOrResident, getUserProfile);
 router.put('/profile', verifyAdminOrResident, updateUserProfile);
 
