@@ -229,7 +229,6 @@ const updateDriver = async (req, res) => {
       if (!isEmailValid(email)) {
         return res.status(400).json({ message: "Invalid email address" });
       }
-      // Ensure email uniqueness if changed
       const qe = await pool.query(`SELECT 1 FROM users WHERE email = $1 AND id <> $2`, [email, id]);
       if (qe.rows.length) {
         return res.status(400).json({ message: "Email already in use." });
@@ -325,12 +324,12 @@ const assignWorkArea = async (req, res) => {
 
 const getDriverWorkAreas = async (req, res) => {
   try {
-    const driverId = toInt(req.params.driverId, null);
+    const driverId = req.user.id;
+
     if (driverId === null) return res.status(400).json({ message: "Invalid driver id" });
 
     ensureSelfOrRole(req.user, driverId, ["admin", "super_admin"]);
 
-    // Stub data
     const workAreas = [
       {
         id: 1,
