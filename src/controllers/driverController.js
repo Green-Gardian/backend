@@ -196,14 +196,13 @@ const getDrivers = async (req, res) => {
 
 const updateDriver = async (req, res) => {
   try {
-    requireRole(req.user, ["admin", "super_admin"]);
-
     const id = toInt(req.params.id, null);
+    ensureSelfOrRole(req.user, id, ["admin", "super_admin"]);
     if (id === null) return res.status(400).json({ message: "Driver ID is required" });
 
     await ensureDriverExists(id);
 
-    const { fullName, phone, status, email } = req.body;
+    const { fullName, phone, email } = req.body;
     const fields = [];
     const vals = [];
     let i = 1;
@@ -220,10 +219,6 @@ const updateDriver = async (req, res) => {
     if (phone !== undefined) {
       fields.push(`phone_number = $${i++}`);
       vals.push(phone);
-    }
-    if (status !== undefined) {
-      fields.push(`status = $${i++}`);
-      vals.push(status);
     }
     if (email !== undefined) {
       if (!isEmailValid(email)) {
