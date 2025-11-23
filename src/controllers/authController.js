@@ -5,9 +5,10 @@ require("dotenv").config();
 const crypto = require("crypto");
 const nodemailer = require("nodemailer");
 const jwt = require("jsonwebtoken");
+const speakeasy = require("speakeasy");
+const QRCode = require("qrcode");
 const { generateTokens } = require("../utils/generateToken");
 const { hashPassword, comparePassword } = require("../utils/hashPassword");
-const { get } = require("http");
 
 
 // Generate OTP function
@@ -177,16 +178,17 @@ const addAdminAndStaff = async (req, res) => {
 
     await client.query("BEGIN");
 
-    // Insert user
+    // Insert user with MFA enabled for admin/super_admin
+    const mfaEnabled = role === "admin" || role === "super_admin";
     const userInsert = await client.query(
       role === "super_admin"
-        ? `INSERT INTO users (first_name, last_name, username, phone_number, email, role)
-           VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`
-        : `INSERT INTO users (first_name, last_name, username, phone_number, email, role, society_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+        ? `INSERT INTO users (first_name, last_name, username, phone_number, email, role, mfa_enabled)
+           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`
+        : `INSERT INTO users (first_name, last_name, username, phone_number, email, role, society_id, mfa_enabled)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
       role === "super_admin"
-        ? [firstName.trim(), lastName.trim(), username, phone, String(email).trim(), role]
-        : [firstName.trim(), lastName.trim(), username, phone, String(email).trim(), role, finalSocietyId]
+        ? [firstName.trim(), lastName.trim(), username, phone, String(email).trim(), role, mfaEnabled]
+        : [firstName.trim(), lastName.trim(), username, phone, String(email).trim(), role, finalSocietyId, mfaEnabled]
     );
     const newUser = userInsert.rows[0];
 
@@ -355,7 +357,7 @@ const addResident = async (req, res) => {
 };
 
 const signIn = async (req, res) => {
-  const { email, password } = req.body;
+  const { email, password, totpCode } = req.body;
 
   try {
     const queryRes = await runQuery(`SELECT * FROM users WHERE email = $1`, [String(email).trim()]);
@@ -379,6 +381,91 @@ const signIn = async (req, res) => {
     const match = await comparePassword(password, user.password_hash);
     if (!match) {
       return res.status(404).json({ message: "Invalid Password" });
+    }
+
+    const isAdmin = user.role === "admin" || user.role === "super_admin";
+    const mfaEnabled = user.mfa_enabled || false;
+    const hasSecret = !!user.totp_secret;
+
+    if (isAdmin) {
+      if (!mfaEnabled) {
+        await runQuery(
+          `UPDATE users SET mfa_enabled = TRUE WHERE id = $1`,
+          [user.id]
+        );
+      }
+
+      if (hasSecret) {
+        if (!totpCode) {
+          return res.status(400).json({
+            message: "TOTP code is required",
+            requiresMFA: true,
+          });
+        }
+
+        const cleanTotpCode = String(totpCode).trim().replace(/\s/g, "");
+        if (!/^\d{6}$/.test(cleanTotpCode)) {
+          return res.status(400).json({ message: "TOTP code must be 6 digits" });
+        }
+
+        const cleanSecret = String(user.totp_secret).trim().replace(/\s/g, "");
+
+        const verified = speakeasy.totp.verify({
+          secret: cleanSecret,
+          encoding: "base32",
+          token: cleanTotpCode,
+          window: 4,
+          step: 30,
+        });
+
+        if (!verified) {
+          return res.status(400).json({ message: "Invalid TOTP code" });
+        }
+      } else {
+        const tokens = generateTokens(user);
+
+        await runQuery(
+          `INSERT INTO refresh_tokens (user_id, token, created_at) VALUES ($1, $2, CURRENT_TIMESTAMP)`,
+          [user.id, tokens.refresh_token]
+        );
+
+        return res.status(200).json({
+          message: "Login successful. Please set up MFA to continue using the system.",
+          access_token: tokens.access_token,
+          refresh_token: tokens.refresh_token,
+          username: user.username,
+          is_verified: user.is_verified,
+          role: user.role,
+          society_id: user.society_id,
+          requiresMFASetup: true,
+        });
+      }
+    } else if (mfaEnabled && hasSecret) {
+      if (!totpCode) {
+        return res.status(400).json({
+          message: "TOTP code is required",
+          requiresMFA: true,
+        });
+      }
+
+      const cleanTotpCode = String(totpCode).trim().replace(/\s/g, "");
+      if (!/^\d{6}$/.test(cleanTotpCode)) {
+        return res.status(400).json({ message: "TOTP code must be 6 digits" });
+      }
+
+      const cleanSecret = String(user.totp_secret).trim().replace(/\s/g, "");
+
+      const verified = speakeasy.totp.verify({
+        secret: cleanSecret,
+        encoding: "base32",
+        token: cleanTotpCode,
+        window: 4,
+        step: 30,
+      });
+
+      if (!verified) {
+        return res.status(400).json({ message: "Invalid TOTP code" });
+      }
     }
 
     const tokens = generateTokens(user);
@@ -1372,6 +1459,11 @@ const updateUser = async (req, res) => {
       
       fields.push(`role = $${paramIndex++}`);
       values.push(role);
+      
+      // Auto-enable MFA when role is changed to admin or super_admin
+      if (role === 'admin' || role === 'super_admin') {
+        fields.push(`mfa_enabled = TRUE`);
+      }
     }
 
     if (fields.length === 0) {
@@ -1616,6 +1708,227 @@ const getSystemStats = async (req, res) => {
   }
 };
 
+const generateMFASecret = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const userQuery = await runQuery(
+      `SELECT id, email, username, role, mfa_enabled FROM users WHERE id = $1`,
+      [userId]
+    );
+
+    if (userQuery.rows.length === 0) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const user = userQuery.rows[0];
+
+    const secret = speakeasy.generateSecret({
+      name: `Green Guardian (${user.email || user.username})`,
+      issuer: "Green Guardian",
+      length: 32,
+    });
+
+    const cleanSecret = secret.base32.trim().replace(/\s/g, "");
+    const qrCodeUrl = await QRCode.toDataURL(secret.otpauth_url);
+
+    await runQuery(
+      `UPDATE users SET totp_secret = $1, mfa_verified = FALSE WHERE id = $2`,
+      [cleanSecret, userId]
+    );
+
+    return res.status(200).json({
+      secret: cleanSecret,
+      qrCode: qrCodeUrl,
+      manualEntryKey: cleanSecret,
+      message: "MFA secret generated. Please verify with a TOTP code to enable MFA.",
+    });
+  } catch (error) {
+    console.error("Error generating MFA secret:", error);
+    return res.status(500).json({ message: "Internal server error." });
+  }
+};
+
+const enableMFA = async (req, res) => {
+  try {
+    const { totpCode } = req.body;
+    const userId = req.user.id;
+
+    if (!totpCode) {
+      return res.status(400).json({ message: "TOTP code is required" });
+    }
+
+    const cleanTotpCode = String(totpCode).trim().replace(/\s/g, "");
+    if (!/^\d{6}$/.test(cleanTotpCode)) {
+      return res.status(400).json({ message: "TOTP code must be 6 digits" });
+    }
+
+    const userQuery = await runQuery(
+      `SELECT id, totp_secret, role, mfa_enabled FROM users WHERE id = $1`,
+      [userId]
+    );
+
+    if (userQuery.rows.length === 0) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const user = userQuery.rows[0];
+
+    if (!user.totp_secret) {
+      return res.status(400).json({ message: "Please generate MFA secret first" });
+    }
+
+    const cleanSecret = String(user.totp_secret).trim().replace(/\s/g, "");
+
+    const verified = speakeasy.totp.verify({
+      secret: cleanSecret,
+      encoding: "base32",
+      token: cleanTotpCode,
+      window: 4,
+      step: 30,
+    });
+
+    if (!verified) {
+      return res.status(400).json({ 
+        message: "Invalid TOTP code. Please try again." 
+      });
+    }
+
+    await runQuery(
+      `UPDATE users SET mfa_enabled = TRUE, mfa_verified = TRUE WHERE id = $1`,
+      [userId]
+    );
+
+    return res.status(200).json({
+      message: "MFA enabled successfully",
+      mfaEnabled: true,
+    });
+  } catch (error) {
+    console.error("Error enabling MFA:", error);
+    return res.status(500).json({ message: "Internal server error." });
+  }
+};
+
+const verifyMFA = async (req, res) => {
+  try {
+    const { email, totpCode } = req.body;
+
+    if (!email || !totpCode) {
+      return res.status(400).json({ message: "Email and TOTP code are required" });
+    }
+
+    const userQuery = await runQuery(
+      `SELECT id, totp_secret, mfa_enabled, role FROM users WHERE email = $1`,
+      [String(email).trim()]
+    );
+
+    if (userQuery.rows.length === 0) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const user = userQuery.rows[0];
+
+    if (!user.mfa_enabled || !user.totp_secret) {
+      return res.status(400).json({ message: "MFA is not enabled for this user" });
+    }
+
+    const cleanTotpCode = String(totpCode).trim().replace(/\s/g, "");
+    if (!/^\d{6}$/.test(cleanTotpCode)) {
+      return res.status(400).json({ message: "TOTP code must be 6 digits" });
+    }
+
+    const cleanSecret = String(user.totp_secret).trim().replace(/\s/g, "");
+
+    const verified = speakeasy.totp.verify({
+      secret: cleanSecret,
+      encoding: "base32",
+      token: cleanTotpCode,
+      window: 4,
+      step: 30,
+    });
+
+    if (!verified) {
+      return res.status(400).json({ message: "Invalid TOTP code" });
+    }
+
+    return res.status(200).json({
+      message: "MFA verified successfully",
+      verified: true,
+    });
+  } catch (error) {
+    console.error("Error verifying MFA:", error);
+    return res.status(500).json({ message: "Internal server error." });
+  }
+};
+
+const disableMFA = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    // Get user details
+    const userQuery = await runQuery(
+      `SELECT id, role, mfa_enabled FROM users WHERE id = $1`,
+      [userId]
+    );
+
+    if (userQuery.rows.length === 0) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const user = userQuery.rows[0];
+
+    // Admin and super_admin cannot disable MFA
+    if (user.role === "admin" || user.role === "super_admin") {
+      return res.status(403).json({
+        message: "MFA cannot be disabled for admin and super_admin users",
+      });
+    }
+
+    // Disable MFA
+    await runQuery(
+      `UPDATE users SET mfa_enabled = FALSE, mfa_verified = FALSE, totp_secret = NULL WHERE id = $1`,
+      [userId]
+    );
+
+    return res.status(200).json({
+      message: "MFA disabled successfully",
+      mfaEnabled: false,
+    });
+  } catch (error) {
+    console.error("Error disabling MFA:", error);
+    return res.status(500).json({ message: "Internal server error." });
+  }
+};
+
+const getMFAStatus = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const userQuery = await runQuery(
+      `SELECT id, role, mfa_enabled, mfa_verified, totp_secret FROM users WHERE id = $1`,
+      [userId]
+    );
+
+    if (userQuery.rows.length === 0) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const user = userQuery.rows[0];
+    const isAdmin = user.role === "admin" || user.role === "super_admin";
+
+    return res.status(200).json({
+      mfaEnabled: user.mfa_enabled || false,
+      mfaVerified: user.mfa_verified || false,
+      canDisable: !isAdmin, // Only non-admin users can disable MFA
+      isRequired: isAdmin, // MFA is required for admin/super_admin
+      hasSecret: !!user.totp_secret,
+    });
+  } catch (error) {
+    console.error("Error getting MFA status:", error);
+    return res.status(500).json({ message: "Internal server error." });
+  }
+};
+
 module.exports = {
   refreshToken,
   signIn,
@@ -1636,4 +1949,9 @@ module.exports = {
   updateProfile,
   addResident,
   getUsersBySociety,
+  generateMFASecret,
+  enableMFA,
+  verifyMFA,
+  disableMFA,
+  getMFAStatus,
 };
