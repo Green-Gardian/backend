@@ -13,7 +13,6 @@ const {
   resetPassword,
   getAllUsers,
   blockUser,
-  deleteUser,
   getSystemStats,
   getProfileData,
   addResident,
@@ -63,7 +62,7 @@ router.post("/verify-otp-reset", verifyOTPAndResetPassword);
 router.get("/users", verifyToken, verifyAdminOrSuperAdmin, verifyMFASetup, getAllUsers);
 router.put("/users/:userId", verifyToken, verifyAdminOrSuperAdmin, verifyMFASetup, updateUser);
 router.patch("/users/:userId/block", verifyToken, verifyAdminOrSuperAdmin, verifyMFASetup, blockUser);
-router.delete("/users/:userId", verifyToken, verifyAdminOrSuperAdmin, verifyMFASetup, deleteUser);
+// Delete user route removed - users should be blocked/unblocked instead of deleted
 router.get("/system-stats", verifyToken, verifySuperAdmin, verifyMFASetup, getSystemStats);
 
 // MFA Routes - These should NOT require MFA setup (they are used to set up MFA)

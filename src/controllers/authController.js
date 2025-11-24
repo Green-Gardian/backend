@@ -399,6 +399,19 @@ const signIn = async (req, res) => {
       return res.status(403).json({ message: "Account has been blocked. Please contact support." });
     }
 
+    // Check if user's society is blocked (only for users with a society_id)
+    if (user.society_id) {
+      const societyCheck = await runQuery(
+        `SELECT is_blocked FROM societies WHERE id = $1`,
+        [user.society_id]
+      );
+      if (societyCheck.rows.length > 0 && societyCheck.rows[0].is_blocked) {
+        return res.status(403).json({ 
+          message: "Your society has been blocked. Please contact support." 
+        });
+      }
+    }
+
     // Check if user is verified
     if (!user.is_verified) {
       return res.status(403).json({
