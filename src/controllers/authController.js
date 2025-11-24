@@ -1662,7 +1662,7 @@ const getSystemStats = async (req, res) => {
     const recentActivity = await runQuery(`
       SELECT
         COUNT(*) as new_users,
-        COUNT(CASE WHEN role = 'admin' OR role = 'sub_admin THEN 1 END) as new_admins,
+        COUNT(CASE WHEN role = 'admin' OR role = 'sub_admin' THEN 1 END) as new_admins,
         COUNT(CASE WHEN role = 'customer_support' THEN 1 END) as new_staff
       FROM users
       WHERE created_at >= NOW() - INTERVAL '7 days'
