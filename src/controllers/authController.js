@@ -133,11 +133,12 @@ const addAdminAndStaff = async (req, res) => {
     const need = requireAll({ firstName, lastName, phone, role, email });
     if (!need.ok) return res.status(400).json({ message: "All fields are required" });
 
-    // Determine the society ID based on user role
+    // Determine the society ID and created_by based on user role
     let finalSocietyId = societyId;
+    let createdBy = null;
     
     if (role !== "super_admin") {
-      if (currentUser.role === 'admin') {
+      if (currentUser.role === 'admin' || currentUser.role === 'sub_admin') {
         // Admin users can only add staff to their own society
         finalSocietyId = currentUser.society_id;
         
@@ -153,14 +154,34 @@ const addAdminAndStaff = async (req, res) => {
         if (!finalSocietyId) {
           return res.status(400).json({ message: "Admin user must be associated with a society" });
         }
+
+        // Store the admin's ID as creator for sub_admin role
+        if (role === 'sub_admin') {
+          createdBy = currentUser.id;
+        }
+
+        // Only admin can create sub_admin, sub_admin cannot create another sub_admin
+        if (role === 'sub_admin' && currentUser.role === 'sub_admin') {
+          return res.status(403).json({ message: "Sub-admin cannot create other sub-admins" });
+        }
       } else if (currentUser.role === 'super_admin') {
         // Super admin can choose society, but it's required
         if (!societyId) {
           return res.status(400).json({ message: "Society ID is required for non-super admin roles" });
         }
         finalSocietyId = societyId;
+
+        // Store super_admin's ID as creator for sub_admin role
+        if (role === 'sub_admin') {
+          createdBy = currentUser.id;
+        }
       } else {
         return res.status(403).json({ message: "Unauthorized to add staff" });
+      }
+    } else {
+      // For super_admin role creation, store the creator
+      if (currentUser.role === 'super_admin') {
+        createdBy = currentUser.id;
       }
     }
 
@@ -192,8 +213,8 @@ const addAdminAndStaff = async (req, res) => {
     );
     const newUser = userInsert.rows[0];
 
-    // If admin, add to society chat
-    if (role === "admin") {
+    // If admin or sub_admin, add to society chat
+    if (role === "admin" || role === "sub_admin") {
       const chat = await client.query(`SELECT * FROM chat WHERE society_id = $1`, [finalSocietyId]);
       if (chat.rows.length > 0) {
         const row = chat.rows[0];
@@ -229,11 +250,17 @@ const addAdminAndStaff = async (req, res) => {
 
     return res.status(201).json({
       message: `Staff created. Email sent to verify and set password.`,
+      user: {
+        id: newUser.id,
+        email: newUser.email,
+        role: newUser.role,
+        createdBy: newUser.created_by
+      }
     });
   } catch (error) {
     // If anything failed (including email), rollback so no partial user is left
     try { await client.query("ROLLBACK"); } catch (_) {}
-    console.error(` Error creating user: ${error.message}`);
+    console.error(`Error creating user: ${error.message}`);
     if (error.code === "EMAIL_SEND_FAILED" || error.code === "EMAIL_CONFIG_MISSING") {
       return res.status(502).json({ error: "Unable to send verification email" });
     }
@@ -242,6 +269,7 @@ const addAdminAndStaff = async (req, res) => {
     client.release();
   }
 };
+
 
 const addResident = async (req, res) => {
   try {
@@ -284,7 +312,7 @@ const addResident = async (req, res) => {
       if (!societyId) {
         return res.status(400).json({ message: "Society ID is required" });
       }
-    } else if (requesterData.role === "admin") {
+    } else if (requesterData.role === "admin" || "sub_admin") {
       societyId = requesterData.society_id;
       if (!societyId) {
         return res
@@ -1184,7 +1212,7 @@ const getAllUsers = async (req, res) => {
     const currentUserSocietyId = req.user.society_id;
 
     // Super admin can see all users, admin can only see users from their society
-    if (currentUserRole === 'admin') {
+    if (currentUserRole === 'admin' || currentUserRole === 'sub_admin') {
       const cond = `u.society_id = $${idx++} AND u.id != $${idx++}`;
       whereClause = `WHERE ${cond}`;
       values.push(currentUserSocietyId, currentUserId);
@@ -1377,7 +1405,7 @@ const updateUser = async (req, res) => {
     const targetUser = userCheck.rows[0];
 
     // Authorization checks
-    if (currentUser.role === 'admin') {
+    if (currentUser.role === 'admin' || currentUser.role === 'sub_admin') {
       // Admin can only update users from their own society
       const adminSocietyCheck = await runQuery(
         `SELECT society_id FROM users WHERE id = $1`,
@@ -1518,7 +1546,7 @@ const blockUser = async (req, res) => {
     const targetUser = userCheck.rows[0];
 
     // Authorization checks
-    if (currentUser.role === 'admin') {
+    if (currentUser.role === 'admin' || currentUser.role === 'sub_admin') {
       // Admin can only block users from their own society
       const adminSocietyCheck = await runQuery(
         `SELECT society_id FROM users WHERE id = $1`,
@@ -1578,7 +1606,7 @@ const deleteUser = async (req, res) => {
     const targetUser = userCheck.rows[0];
 
     // Authorization checks
-    if (currentUser.role === 'admin') {
+    if (currentUser.role === 'admin' || currentUser.role === 'sub_admin') {
       // Admin can only delete users from their own society
       const adminSocietyCheck = await runQuery(
         `SELECT society_id FROM users WHERE id = $1`,
@@ -1634,7 +1662,7 @@ const getSystemStats = async (req, res) => {
     const recentActivity = await runQuery(`
       SELECT
         COUNT(*) as new_users,
-        COUNT(CASE WHEN role = 'admin' THEN 1 END) as new_admins,
+        COUNT(CASE WHEN role = 'admin' OR role = 'sub_admin THEN 1 END) as new_admins,
         COUNT(CASE WHEN role = 'customer_support' THEN 1 END) as new_staff
       FROM users
       WHERE created_at >= NOW() - INTERVAL '7 days'
