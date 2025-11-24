@@ -203,13 +203,13 @@ const addAdminAndStaff = async (req, res) => {
     const mfaEnabled = role === "admin" || role === "super_admin";
     const userInsert = await client.query(
       role === "super_admin"
-        ? `INSERT INTO users (first_name, last_name, username, phone_number, email, role, mfa_enabled)
+        ? `INSERT INTO users (first_name, last_name, username, phone_number, email, role, mfa_enabled,created_by)
            VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`
-        : `INSERT INTO users (first_name, last_name, username, phone_number, email, role, society_id, mfa_enabled)
+        : `INSERT INTO users (first_name, last_name, username, phone_number, email, role, society_id, mfa_enabled,created_by)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
       role === "super_admin"
-        ? [firstName.trim(), lastName.trim(), username, phone, String(email).trim(), role, mfaEnabled]
-        : [firstName.trim(), lastName.trim(), username, phone, String(email).trim(), role, finalSocietyId, mfaEnabled]
+        ? [firstName.trim(), lastName.trim(), username, phone, String(email).trim(), role, mfaEnabled,createdBy]
+        : [firstName.trim(), lastName.trim(), username, phone, String(email).trim(), role, finalSocietyId, mfaEnabled,createdBy]
     );
     const newUser = userInsert.rows[0];
 
