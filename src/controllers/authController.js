@@ -132,11 +132,12 @@ const addAdminAndStaff = async (req, res) => {
     const need = requireAll({ firstName, lastName, phone, role, email });
     if (!need.ok) return res.status(400).json({ message: "All fields are required" });
 
-    // Determine the society ID based on user role
+    // Determine the society ID and created_by based on user role
     let finalSocietyId = societyId;
+    let createdBy = null;
     
     if (role !== "super_admin") {
-      if (currentUser.role === 'admin' || currentUser.role === 'sub_admin'  ) {
+      if (currentUser.role === 'admin' || currentUser.role === 'sub_admin') {
         // Admin users can only add staff to their own society
         finalSocietyId = currentUser.society_id;
         
@@ -152,14 +153,34 @@ const addAdminAndStaff = async (req, res) => {
         if (!finalSocietyId) {
           return res.status(400).json({ message: "Admin user must be associated with a society" });
         }
+
+        // Store the admin's ID as creator for sub_admin role
+        if (role === 'sub_admin') {
+          createdBy = currentUser.id;
+        }
+
+        // Only admin can create sub_admin, sub_admin cannot create another sub_admin
+        if (role === 'sub_admin' && currentUser.role === 'sub_admin') {
+          return res.status(403).json({ message: "Sub-admin cannot create other sub-admins" });
+        }
       } else if (currentUser.role === 'super_admin') {
         // Super admin can choose society, but it's required
         if (!societyId) {
           return res.status(400).json({ message: "Society ID is required for non-super admin roles" });
         }
         finalSocietyId = societyId;
+
+        // Store super_admin's ID as creator for sub_admin role
+        if (role === 'sub_admin') {
+          createdBy = currentUser.id;
+        }
       } else {
         return res.status(403).json({ message: "Unauthorized to add staff" });
+      }
+    } else {
+      // For super_admin role creation, store the creator
+      if (currentUser.role === 'super_admin') {
+        createdBy = currentUser.id;
       }
     }
 
@@ -177,20 +198,20 @@ const addAdminAndStaff = async (req, res) => {
 
     await client.query("BEGIN");
 
-    // Insert user
+    // Insert user with created_by field
     const userInsert = await client.query(
       role === "super_admin"
-        ? `INSERT INTO users (first_name, last_name, username, phone_number, email, role)
-           VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`
-        : `INSERT INTO users (first_name, last_name, username, phone_number, email, role, society_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+        ? `INSERT INTO users (first_name, last_name, username, phone_number, email, role, created_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`
+        : `INSERT INTO users (first_name, last_name, username, phone_number, email, role, society_id, created_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
       role === "super_admin"
-        ? [firstName.trim(), lastName.trim(), username, phone, String(email).trim(), role]
-        : [firstName.trim(), lastName.trim(), username, phone, String(email).trim(), role, finalSocietyId]
+        ? [firstName.trim(), lastName.trim(), username, phone, String(email).trim(), role, createdBy]
+        : [firstName.trim(), lastName.trim(), username, phone, String(email).trim(), role, finalSocietyId, createdBy]
     );
     const newUser = userInsert.rows[0];
 
-    // If admin, add to society chat
+    // If admin or sub_admin, add to society chat
     if (role === "admin" || role === "sub_admin") {
       const chat = await client.query(`SELECT * FROM chat WHERE society_id = $1`, [finalSocietyId]);
       if (chat.rows.length > 0) {
@@ -227,11 +248,17 @@ const addAdminAndStaff = async (req, res) => {
 
     return res.status(201).json({
       message: `Staff created. Email sent to verify and set password.`,
+      user: {
+        id: newUser.id,
+        email: newUser.email,
+        role: newUser.role,
+        createdBy: newUser.created_by
+      }
     });
   } catch (error) {
     // If anything failed (including email), rollback so no partial user is left
     try { await client.query("ROLLBACK"); } catch (_) {}
-    console.error(` Error creating user: ${error.message}`);
+    console.error(`Error creating user: ${error.message}`);
     if (error.code === "EMAIL_SEND_FAILED" || error.code === "EMAIL_CONFIG_MISSING") {
       return res.status(502).json({ error: "Unable to send verification email" });
     }
@@ -240,6 +267,7 @@ const addAdminAndStaff = async (req, res) => {
     client.release();
   }
 };
+
 
 const addResident = async (req, res) => {
   try {
