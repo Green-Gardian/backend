@@ -33,7 +33,7 @@ const verifySuperAdmin = (req, res, next) => {
 }
 
 const verifyAdminOrSuperAdmin = (req, res, next) => {
-    if (req.user.role === 'super_admin' || req.user.role === 'admin') {
+    if (req.user.role === 'super_admin' || req.user.role === 'admin' || req.user.role === 'sub_admin') {
         next();
     }
     else {

@@ -40,7 +40,7 @@ const verifyAdmin = (req, res, next) => {
         });
     }
     
-    if (req.user.role !== 'admin') {
+    if (req.user.role !== 'admin' || req.user.role !== 'sub_admin') {
         return res.status(403).json({ 
             success: false, 
             message: 'Access denied. Admin role required.' 
@@ -79,7 +79,7 @@ const verifyAdminOrResident = (req, res, next) => {
         });
     }
     
-    const allowedRoles = ['admin', 'resident'];
+    const allowedRoles = ['admin','sub_admin' ,'resident'];
     if (!allowedRoles.includes(req.user.role)) {
         return res.status(403).json({ 
             success: false, 

@@ -83,7 +83,7 @@ const getVehicles = async (req, res) => {
         let query;
         let params = [];
 
-        if (userRole === "admin" || userRole === "super_admin") {
+        if (userRole === "admin" || userRole === "sub_admin" || userRole === "super_admin") {
             query = `
                 SELECT * 
                 FROM vehicle v 

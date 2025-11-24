@@ -169,7 +169,7 @@ const getDrivers = async (req, res) => {
   try {
     const role = req.user.role;
 
-    if (role === "admin" || role === "super_admin") {
+    if (role === "admin" || role === "sub_admin"|| role === "super_admin") {
       const q = await pool.query(`SELECT * FROM users WHERE role = 'driver'`);
       return res.status(200).json({
         message: "Drivers retrieved successfully",
@@ -197,7 +197,7 @@ const getDrivers = async (req, res) => {
 const updateDriver = async (req, res) => {
   try {
     const id = toInt(req.params.id, null);
-    ensureSelfOrRole(req.user, id, ["admin", "super_admin"]);
+    ensureSelfOrRole(req.user, id, ["admin","sub_admin", "super_admin"]);
     if (id === null) return res.status(400).json({ message: "Driver ID is required" });
 
     await ensureDriverExists(id);
@@ -254,7 +254,7 @@ const updateDriver = async (req, res) => {
 
 const deleteDriver = async (req, res) => {
   try {
-    requireRole(req.user, ["admin", "super_admin"]);
+    requireRole(req.user, ["admin","sub_admin", "super_admin"]);
 
     const id = toInt(req.params.id, null);
     if (id === null) return res.status(400).json({ message: "Driver ID is required" });
@@ -276,7 +276,7 @@ const deleteDriver = async (req, res) => {
 
 const assignWorkArea = async (req, res) => {
   try {
-    requireRole(req.user, ["admin", "super_admin"]);
+    requireRole(req.user, ["admin","sub_admin", "super_admin"]);
 
     const { driverId, workAreaId, societyId } = req.body;
 
@@ -323,7 +323,7 @@ const getDriverWorkAreas = async (req, res) => {
 
     if (driverId === null) return res.status(400).json({ message: "Invalid driver id" });
 
-    ensureSelfOrRole(req.user, driverId, ["admin", "super_admin"]);
+    ensureSelfOrRole(req.user, driverId, ["admin","sub_admin", "super_admin"]);
 
     const workAreas = [
       {
@@ -365,7 +365,7 @@ const getCollectionRoutes = async (req, res) => {
     const driverId = toInt(req.params.driverId, null);
     if (driverId === null) return res.status(400).json({ message: "Invalid driver id" });
 
-    ensureSelfOrRole(req.user, driverId, ["admin", "super_admin"]);
+    ensureSelfOrRole(req.user, driverId, ["admin","sub_admin", "super_admin"]);
 
     // Stub data
     const routes = [
@@ -489,7 +489,7 @@ const getDriverPerformance = async (req, res) => {
     const driverId = toInt(req.params.driverId, null);
     if (driverId === null) return res.status(400).json({ message: "Invalid driver id" });
 
-    ensureSelfOrRole(req.user, driverId, ["admin", "super_admin"]);
+    ensureSelfOrRole(req.user, driverId, ["admin","sub_admin", "super_admin"]);
 
     const periodDays = toInt(req.query.period, 30);
 
@@ -581,7 +581,7 @@ const getDriverSchedule = async (req, res) => {
     const driverId = toInt(req.params.driverId, null);
     if (driverId === null) return res.status(400).json({ message: "Invalid driver id" });
 
-    ensureSelfOrRole(req.user, driverId, ["admin", "super_admin"]);
+    ensureSelfOrRole(req.user, driverId, ["admin","sub_admin", "super_admin"]);
 
     const targetDate = req.query.date || new Date().toISOString().split("T")[0];
 
