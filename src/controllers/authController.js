@@ -247,6 +247,14 @@ const addAdminAndStaff = async (req, res) => {
     );
     const newUser = userInsert.rows[0];
 
+    if(currentUser.role === "sub_admin"){
+      await logSubAdminActivity({
+        subAdmin: req.user.id,
+        activityType: "CREATED_STAFF",
+        description: `Sub Admin ${req.user.id} created ${role} with email: ${email} at ${Date.now()}`,
+      });
+    }
+
     // If admin or sub_admin, add to society chat
     if (role === "admin" || role === "sub_admin") {
       const chat = await client.query(
@@ -408,6 +416,14 @@ const addResident = async (req, res) => {
     const newUser = insertUser.rows[0];
     console.log("✅ Created Resident:", newUser);
 
+    if(requesterData.role === "sub_admin"){
+      await logSubAdminActivity({
+        subAdmin: req.user.id,
+        activityType: "CREATED_RESIDENT",
+        description: `Sub Admin ${req.user.id} created resident with email: ${email} ${Date.now()}`,
+      });
+    }
+
     // Email verification token
     const verificationToken = crypto.randomBytes(32).toString("hex");
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
@@ -476,7 +492,7 @@ const signIn = async (req, res) => {
 
     if (user.role === "sub_admin") {
       await logSubAdminActivity({
-        subAdmin: user.id,
+        subAdmin: user,
         activityType: "LOGIN",
         description: `Sub Admin ${user.firstName} ${user.lastName} Logged in at ${Date.now()}`,
       });
@@ -603,6 +619,13 @@ const signOut = async (req, res) => {
       refresh_token,
     ]);
 
+    if(req.user.role === "sub_admin"){
+      await logSubAdminActivity({
+        subAdmin: req.user.id,
+        activityType: "SIGNED_OUT",
+        description: `Sub Admin ${req.user.id} Signed Out at ${Date.now()}`,
+      });
+    }
     return res.status(200).json({ message: "User signed out successfully" });
   } catch (error) {
     return res.status(500).json({ message: `Unable to sign out` });
@@ -889,6 +912,14 @@ const updateProfile = async (req, res) => {
     );
 
     console.log("Checkpoint 4");
+    
+    if(req.user.role === "sub_admin"){
+      await logSubAdminActivity({
+        subAdmin: req.user.id,
+        activityType: "UPDATED_PROFILE",
+        description: `Sub Admin ${req.user.id} updated profile at ${Date.now()}`,
+      });
+    }
 
     return res.status(200).json({
       message: "Profile updated successfully",
@@ -1667,6 +1698,15 @@ const updateUser = async (req, res) => {
 
     const result = await runQuery(updateQuery, values);
 
+
+    if(req.user.role === "sub_admin"){
+      await logSubAdminActivity({
+        subAdmin: req.user.id,
+        activityType: "UPDATE_USER",
+        description: `Sub Admin ${req.user.id} updated data of ${role} with email: ${email} ${Date.now()}`,
+      });
+    }
+
     return res.status(200).json({
       message: "User updated successfully",
       user: result.rows[0],
@@ -1747,6 +1787,14 @@ const blockUser = async (req, res) => {
       `UPDATE users SET is_blocked = $1, updated_at = NOW() WHERE id = $2 RETURNING id, first_name, last_name, email, role, is_blocked`,
       [isBlocked, userId]
     );
+
+    if(req.user.role === "sub_admin"){
+      await logSubAdminActivity({
+        subAdmin: req.user.id,
+        activityType: "BLOCK_USER",
+        description: `Sub Admin ${req.user.id} blocked user with email: ${email} ${Date.now()}`,
+      });
+    }
 
     return res.status(200).json({
       message: `User ${isBlocked ? "blocked" : "unblocked"} successfully`,

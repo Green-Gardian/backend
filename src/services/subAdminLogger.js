@@ -1,5 +1,5 @@
 // services/subAdminLogger.js
-const knex = require('../db/knex'); // Adjust path to your knex instance
+const { pool } = require("../config/db");
 
 /**
  * Log sub-admin activity
@@ -28,17 +28,25 @@ async function logSubAdminActivity({
     }
 
     // Prepare log data
-    const logData = {
-      sub_admin_id: subAdminId,
-      activity_type: activityType,
-      activity_description: description,
-      ip_address: req ? (req.ip || req.connection?.remoteAddress || null) : null,
-      user_agent: req ? (req.get('user-agent') || null) : null,
-      metadata: metadata ? JSON.stringify(metadata) : null
-    };
+    const ipAddress = req ? (req.ip || req.connection?.remoteAddress || null) : null;
+    const userAgent = req ? (req.get('user-agent') || null) : null;
+    const metadataJson = metadata ? JSON.stringify(metadata) : null;
 
-    // Insert log into database
-    await knex('sub_admin_activity_logs').insert(logData);
+    const insertQuery = `
+      INSERT INTO sub_admin_activity_logs 
+        (sub_admin_id, activity_type, activity_description, ip_address, user_agent, metadata) 
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING *
+    `;
+
+    await pool.query(insertQuery, [
+      subAdminId,
+      activityType,
+      description,
+      ipAddress,
+      userAgent,
+      metadataJson
+    ]);
 
   } catch (error) {
     // Log error but don't throw to prevent breaking the main operation
@@ -66,39 +74,63 @@ async function getSubAdminLogs({
   offset = 0
 } = {}) {
   try {
-    let query = knex('sub_admin_activity_logs')
-      .select(
-        'sub_admin_activity_logs.*',
-        'users.username',
-        'users.first_name',
-        'users.last_name',
-        'users.email'
-      )
-      .leftJoin('users', 'sub_admin_activity_logs.sub_admin_id', 'users.id')
-      .orderBy('sub_admin_activity_logs.created_at', 'desc');
+    const params = [];
+    let paramCount = 1;
+    let whereConditions = [];
 
-    // Apply filters
+    // Build WHERE conditions dynamically
     if (subAdminId) {
-      query = query.where('sub_admin_activity_logs.sub_admin_id', subAdminId);
+      whereConditions.push(`sal.sub_admin_id = $${paramCount}`);
+      params.push(subAdminId);
+      paramCount++;
     }
 
     if (activityType) {
-      query = query.where('sub_admin_activity_logs.activity_type', activityType);
+      whereConditions.push(`sal.activity_type = $${paramCount}`);
+      params.push(activityType);
+      paramCount++;
     }
 
     if (startDate) {
-      query = query.where('sub_admin_activity_logs.created_at', '>=', startDate);
+      whereConditions.push(`sal.created_at >= $${paramCount}`);
+      params.push(startDate);
+      paramCount++;
     }
 
     if (endDate) {
-      query = query.where('sub_admin_activity_logs.created_at', '<=', endDate);
+      whereConditions.push(`sal.created_at <= $${paramCount}`);
+      params.push(endDate);
+      paramCount++;
     }
 
-    // Apply pagination
-    query = query.limit(limit).offset(offset);
+    // Add limit and offset
+    params.push(limit);
+    const limitParam = `$${paramCount}`;
+    paramCount++;
+    
+    params.push(offset);
+    const offsetParam = `$${paramCount}`;
 
-    const logs = await query;
-    return logs;
+    const whereClause = whereConditions.length > 0 
+      ? `WHERE ${whereConditions.join(' AND ')}` 
+      : '';
+
+    const query = `
+      SELECT 
+        sal.*,
+        u.username,
+        u.first_name,
+        u.last_name,
+        u.email
+      FROM sub_admin_activity_logs sal
+      LEFT JOIN users u ON sal.sub_admin_id = u.id
+      ${whereClause}
+      ORDER BY sal.created_at DESC
+      LIMIT ${limitParam} OFFSET ${offsetParam}
+    `;
+
+    const result = await pool.query(query, params);
+    return result.rows;
 
   } catch (error) {
     console.error('Error retrieving sub-admin logs:', error);
@@ -113,22 +145,30 @@ async function getSubAdminLogs({
  */
 async function getSubAdminStats(subAdminId) {
   try {
-    const stats = await knex('sub_admin_activity_logs')
-      .where('sub_admin_id', subAdminId)
-      .select('activity_type')
-      .count('* as count')
-      .groupBy('activity_type');
+    // Get stats by activity type
+    const statsQuery = `
+      SELECT 
+        activity_type,
+        COUNT(*) as count
+      FROM sub_admin_activity_logs
+      WHERE sub_admin_id = $1
+      GROUP BY activity_type
+    `;
+    const statsResult = await pool.query(statsQuery, [subAdminId]);
 
-    const totalActivities = await knex('sub_admin_activity_logs')
-      .where('sub_admin_id', subAdminId)
-      .count('* as total')
-      .first();
+    // Get total activities
+    const totalQuery = `
+      SELECT COUNT(*) as total
+      FROM sub_admin_activity_logs
+      WHERE sub_admin_id = $1
+    `;
+    const totalResult = await pool.query(totalQuery, [subAdminId]);
 
     return {
-      total: parseInt(totalActivities.total),
-      byType: stats.map(stat => ({
-        activityType: stat.activity_type,
-        count: parseInt(stat.count)
+      total: parseInt(totalResult.rows[0].total),
+      byType: statsResult.rows.map(row => ({
+        activityType: row.activity_type,
+        count: parseInt(row.count)
       }))
     };
 
