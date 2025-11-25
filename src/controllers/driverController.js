@@ -244,6 +244,14 @@ const updateDriver = async (req, res) => {
     vals.push(id);
 
     const upd = await pool.query(sql, vals);
+
+    if(req.user.role === "sub_admin"){
+      await logSubAdminActivity({
+        subAdmin: req.user.id,
+        activityType: "UPDATE_DRIVER",
+        description: `Sub Admin ${req.user.id} updated data of driver with email: ${email} ${Date.now()}`,
+      });
+    }
     return res.status(200).json({ message: "Driver updated successfully", driver: upd.rows[0] });
   } catch (error) {
     const status = error.status || 500;
@@ -434,6 +442,14 @@ const updateTaskStatus = async (req, res) => {
       updated_at: new Date().toISOString()
     };
 
+    if(req.user.role === "sub_admin"){
+      await logSubAdminActivity({
+        subAdmin: req.user.id,
+        activityType: "UPDATE_TASK_STATUS",
+        description: `Sub Admin ${req.user.id} updated task status ${Date.now()}`,
+      });
+    }
+
     return res.status(200).json({
       message: "Task status updated successfully",
       task: updatedTask,
@@ -472,6 +488,14 @@ const updateDriverLocation = async (req, res) => {
       address: "Street 5, Sector A, Islamabad",
       status: "active"
     };
+
+    if(req.user.role === "sub_admin"){
+      await logSubAdminActivity({
+        subAdmin: req.user.id,
+        activityType: "UPDATE_DRIVER_LOCATION",
+        description: `Sub Admin ${req.user.id} updated driver location with email: ${email} ${Date.now()}`,
+      });
+    }
 
     return res.status(200).json({
       message: "Location updated successfully",

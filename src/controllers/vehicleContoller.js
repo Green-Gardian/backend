@@ -227,6 +227,14 @@ const updateVehicle = async (req, res) => {
         const updateResult = await pool.query(updateQuery, updateValues);
         const updatedVehicle = updateResult.rows[0];
 
+        if(req.user.role === "sub_admin"){
+      await logSubAdminActivity({
+        subAdmin: req.user.id,
+        activityType: "UPDATE_VEHICLE",
+        description: `Sub Admin ${req.user.id} updated data of vehicle with id: ${id} ${Date.now()}`,
+      });
+    }
+
         res.status(200).json({
             message: "Vehicle updated successfully",
             vehicle: updatedVehicle,

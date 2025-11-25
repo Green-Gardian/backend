@@ -7,7 +7,8 @@ const router = express.Router();
 router.post('/add-driver', addAdminAndStaff);
 router.get('/get-drivers', getDrivers);
 router.put('/update-driver/:id', updateDriver);
-router.delete('/delete-driver/:id', deleteDriver);
+//DELETE DRIVER REMOVED
+// router.delete('/delete-driver/:id', deleteDriver);
 router.post('/assign-work-area', assignWorkArea);
 router.get('/work-areas', getDriverWorkAreas);
 router.get('/:driverId/routes', getCollectionRoutes);
