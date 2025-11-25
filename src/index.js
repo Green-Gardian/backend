@@ -22,6 +22,7 @@ const driverRouter = require("./routes/driverRoutes");
 const alertRouter = require("./routes/alertRoutes");
 const serviceRouter = require("./routes/residentServiceRoutes");
 const chatRouter = require("./routes/chatRoutes");
+const analyticsRouter = require("./routes/analyticsRoutes");
 
 const PORT = process.env.PORT || 3001;
 const app = express();
@@ -48,6 +49,7 @@ app.use("/driver", verifyToken, driverRouter);
 app.use("/alerts", verifyToken, alertRouter);
 app.use("/services", verifyToken, serviceRouter);
 app.use("/chat", verifyToken, chatRouter);
+app.use("/analytics", verifyToken, analyticsRouter);
 
 
 // Health endpoints
