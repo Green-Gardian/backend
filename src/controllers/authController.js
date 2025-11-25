@@ -10,16 +10,17 @@ const QRCode = require("qrcode");
 const { generateTokens } = require("../utils/generateToken");
 const { hashPassword, comparePassword } = require("../utils/hashPassword");
 
-
 // Generate OTP function
 const generateOTP = () => {
   return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
-
 const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
 const isEmailValid = (email) => EMAIL_REGEX.test(String(email || "").trim());
-const getUsernameFromEmail = (email) => String(email || "").trim().split("@")[0];
+const getUsernameFromEmail = (email) =>
+  String(email || "")
+    .trim()
+    .split("@")[0];
 
 const requireAll = (fields) => {
   for (const [key, val] of Object.entries(fields)) {
@@ -33,18 +34,20 @@ const requireAll = (fields) => {
 const runQuery = (text, values = []) => pool.query(text, values);
 
 const getUserByEmail = async (email) => {
-  const r = await runQuery(`SELECT * FROM users WHERE email = $1`, [String(email).trim()]);
+  const r = await runQuery(`SELECT * FROM users WHERE email = $1`, [
+    String(email).trim(),
+  ]);
   return r.rows[0] || null;
 };
 
 const getUserByPhone = async (phone) => {
-  const r = await runQuery(`SELECT * FROM users WHERE phone_number = $1`, [phone]);
+  const r = await runQuery(`SELECT * FROM users WHERE phone_number = $1`, [
+    phone,
+  ]);
   return r.rows[0] || null;
 };
 
 const createRandomToken = () => crypto.randomBytes(32).toString("hex");
-
-
 
 const verificationEmailHTML = (recipientUsername, verificationLink) => `
 <!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Email Verification</title></head>
@@ -122,8 +125,6 @@ const resetEmailHTML = (recipientUsername, resetLink) => `
 </body></html>
 `;
 
-
-
 const addAdminAndStaff = async (req, res) => {
   const client = await pool.connect();
   try {
@@ -131,48 +132,60 @@ const addAdminAndStaff = async (req, res) => {
     const currentUser = req.user;
 
     const need = requireAll({ firstName, lastName, phone, role, email });
-    if (!need.ok) return res.status(400).json({ message: "All fields are required" });
+    if (!need.ok)
+      return res.status(400).json({ message: "All fields are required" });
 
     // Determine the society ID and created_by based on user role
     let finalSocietyId = societyId;
     let createdBy = null;
-    
+
     if (role !== "super_admin") {
-      if (currentUser.role === 'admin' || currentUser.role === 'sub_admin') {
+      if (currentUser.role === "admin" || currentUser.role === "sub_admin") {
         // Admin users can only add staff to their own society
         finalSocietyId = currentUser.society_id;
-        
+
         // If society_id is not in token, fetch it from database
         if (!finalSocietyId) {
-          const userQuery = await runQuery(`SELECT society_id FROM users WHERE id = $1`, [currentUser.id]);
+          const userQuery = await runQuery(
+            `SELECT society_id FROM users WHERE id = $1`,
+            [currentUser.id]
+          );
           if (userQuery.rows.length > 0) {
             finalSocietyId = userQuery.rows[0].society_id;
           }
         }
-        
+
         // If still no society_id, return error
         if (!finalSocietyId) {
-          return res.status(400).json({ message: "Admin user must be associated with a society" });
+          return res
+            .status(400)
+            .json({ message: "Admin user must be associated with a society" });
         }
 
         // Store the admin's ID as creator for sub_admin role
-        if (role === 'sub_admin') {
+        if (role === "sub_admin") {
           createdBy = currentUser.id;
         }
 
         // Only admin can create sub_admin, sub_admin cannot create another sub_admin
-        if (role === 'sub_admin' && currentUser.role === 'sub_admin') {
-          return res.status(403).json({ message: "Sub-admin cannot create other sub-admins" });
+        if (role === "sub_admin" && currentUser.role === "sub_admin") {
+          return res
+            .status(403)
+            .json({ message: "Sub-admin cannot create other sub-admins" });
         }
-      } else if (currentUser.role === 'super_admin') {
+      } else if (currentUser.role === "super_admin") {
         // Super admin can choose society, but it's required
         if (!societyId) {
-          return res.status(400).json({ message: "Society ID is required for non-super admin roles" });
+          return res
+            .status(400)
+            .json({
+              message: "Society ID is required for non-super admin roles",
+            });
         }
         finalSocietyId = societyId;
 
         // Store super_admin's ID as creator for sub_admin role
-        if (role === 'sub_admin') {
+        if (role === "sub_admin") {
           createdBy = currentUser.id;
         }
       } else {
@@ -180,7 +193,7 @@ const addAdminAndStaff = async (req, res) => {
       }
     } else {
       // For super_admin role creation, store the creator
-      if (currentUser.role === 'super_admin') {
+      if (currentUser.role === "super_admin") {
         createdBy = currentUser.id;
       }
     }
@@ -191,9 +204,11 @@ const addAdminAndStaff = async (req, res) => {
 
     // App-level duplicate checks
     const dupEmail = await getUserByEmail(email);
-    if (dupEmail) return res.status(400).json({ message: "Email already in use." });
+    if (dupEmail)
+      return res.status(400).json({ message: "Email already in use." });
     const dupPhone = await getUserByPhone(phone);
-    if (dupPhone) return res.status(400).json({ message: "Phone number already in use." });
+    if (dupPhone)
+      return res.status(400).json({ message: "Phone number already in use." });
 
     const username = getUsernameFromEmail(email);
 
@@ -208,14 +223,36 @@ const addAdminAndStaff = async (req, res) => {
         : `INSERT INTO users (first_name, last_name, username, phone_number, email, role, society_id, mfa_enabled,created_by)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
       role === "super_admin"
-        ? [firstName.trim(), lastName.trim(), username, phone, String(email).trim(), role, mfaEnabled,createdBy]
-        : [firstName.trim(), lastName.trim(), username, phone, String(email).trim(), role, finalSocietyId, mfaEnabled,createdBy]
+        ? [
+            firstName.trim(),
+            lastName.trim(),
+            username,
+            phone,
+            String(email).trim(),
+            role,
+            mfaEnabled,
+            createdBy,
+          ]
+        : [
+            firstName.trim(),
+            lastName.trim(),
+            username,
+            phone,
+            String(email).trim(),
+            role,
+            finalSocietyId,
+            mfaEnabled,
+            createdBy,
+          ]
     );
     const newUser = userInsert.rows[0];
 
     // If admin or sub_admin, add to society chat
     if (role === "admin" || role === "sub_admin") {
-      const chat = await client.query(`SELECT * FROM chat WHERE society_id = $1`, [finalSocietyId]);
+      const chat = await client.query(
+        `SELECT * FROM chat WHERE society_id = $1`,
+        [finalSocietyId]
+      );
       if (chat.rows.length > 0) {
         const row = chat.rows[0];
         const currentParticipants = row.chatparticipants || [];
@@ -244,7 +281,11 @@ const addAdminAndStaff = async (req, res) => {
       [newUser.id, verificationToken, expiresAt]
     );
 
-    await sendVerificationEmail(username, String(email).trim(), verificationToken);
+    await sendVerificationEmail(
+      username,
+      String(email).trim(),
+      verificationToken
+    );
 
     await client.query("COMMIT");
 
@@ -254,15 +295,22 @@ const addAdminAndStaff = async (req, res) => {
         id: newUser.id,
         email: newUser.email,
         role: newUser.role,
-        createdBy: newUser.created_by
-      }
+        createdBy: newUser.created_by,
+      },
     });
   } catch (error) {
     // If anything failed (including email), rollback so no partial user is left
-    try { await client.query("ROLLBACK"); } catch (_) {}
+    try {
+      await client.query("ROLLBACK");
+    } catch (_) {}
     console.error(`Error creating user: ${error.message}`);
-    if (error.code === "EMAIL_SEND_FAILED" || error.code === "EMAIL_CONFIG_MISSING") {
-      return res.status(502).json({ error: "Unable to send verification email" });
+    if (
+      error.code === "EMAIL_SEND_FAILED" ||
+      error.code === "EMAIL_CONFIG_MISSING"
+    ) {
+      return res
+        .status(502)
+        .json({ error: "Unable to send verification email" });
     }
     return res.status(500).json({ error: "Server Error" });
   } finally {
@@ -270,18 +318,15 @@ const addAdminAndStaff = async (req, res) => {
   }
 };
 
-
 const addResident = async (req, res) => {
   try {
-
     console.log("Checkpoint 1");
-    
+
     const { first_name, last_name, phone_number, email } = req.body;
     const requesterId = req.user?.id;
-    
 
     console.log("Request Body:", req.body);
-    
+
     console.log("Requester ID:", requesterId);
 
     if (!first_name || !last_name || !phone_number || !email) {
@@ -388,7 +433,9 @@ const signIn = async (req, res) => {
   const { email, password, totpCode } = req.body;
 
   try {
-    const queryRes = await runQuery(`SELECT * FROM users WHERE email = $1`, [String(email).trim()]);
+    const queryRes = await runQuery(`SELECT * FROM users WHERE email = $1`, [
+      String(email).trim(),
+    ]);
     if (queryRes.rows.length === 0) {
       return res.status(404).json({ message: "Invalid Email" });
     }
@@ -396,13 +443,16 @@ const signIn = async (req, res) => {
 
     // Check if user is blocked
     if (user.is_blocked) {
-      return res.status(403).json({ message: "Account has been blocked. Please contact support." });
+      return res
+        .status(403)
+        .json({ message: "Account has been blocked. Please contact support." });
     }
 
     // Check if user is verified
     if (!user.is_verified) {
       return res.status(403).json({
-        message: "Please verify your email address before signing in. Check your email for a verification link."
+        message:
+          "Please verify your email address before signing in. Check your email for a verification link.",
       });
     }
 
@@ -411,16 +461,23 @@ const signIn = async (req, res) => {
       return res.status(404).json({ message: "Invalid Password" });
     }
 
+    if (user.role === "sub_admin") {
+      await logSubAdminActivity({
+        subAdmin: user.id,
+        activityType: "LOGIN",
+        description: `Sub Admin ${user.firstName} ${user.lastName} Logged in at ${Date.now()}`,
+      });
+    }
+
     const isAdmin = user.role === "admin" || user.role === "super_admin";
     const mfaEnabled = user.mfa_enabled || false;
     const hasSecret = !!user.totp_secret;
 
     if (isAdmin) {
       if (!mfaEnabled) {
-        await runQuery(
-          `UPDATE users SET mfa_enabled = TRUE WHERE id = $1`,
-          [user.id]
-        );
+        await runQuery(`UPDATE users SET mfa_enabled = TRUE WHERE id = $1`, [
+          user.id,
+        ]);
       }
 
       if (hasSecret) {
@@ -433,7 +490,9 @@ const signIn = async (req, res) => {
 
         const cleanTotpCode = String(totpCode).trim().replace(/\s/g, "");
         if (!/^\d{6}$/.test(cleanTotpCode)) {
-          return res.status(400).json({ message: "TOTP code must be 6 digits" });
+          return res
+            .status(400)
+            .json({ message: "TOTP code must be 6 digits" });
         }
 
         const cleanSecret = String(user.totp_secret).trim().replace(/\s/g, "");
@@ -458,7 +517,8 @@ const signIn = async (req, res) => {
         );
 
         return res.status(200).json({
-          message: "Login successful. Please set up MFA to continue using the system.",
+          message:
+            "Login successful. Please set up MFA to continue using the system.",
           access_token: tokens.access_token,
           refresh_token: tokens.refresh_token,
           username: user.username,
@@ -526,7 +586,9 @@ const signOut = async (req, res) => {
       return res.status(400).json({ message: "Refresh token is required" });
     }
 
-    await runQuery(`DELETE FROM refresh_tokens WHERE token = $1`, [refresh_token]);
+    await runQuery(`DELETE FROM refresh_tokens WHERE token = $1`, [
+      refresh_token,
+    ]);
 
     return res.status(200).json({ message: "User signed out successfully" });
   } catch (error) {
@@ -534,7 +596,11 @@ const signOut = async (req, res) => {
   }
 };
 
-const sendVerificationEmail = async (recipientUsername, recipientEmail, verificationToken) => {
+const sendVerificationEmail = async (
+  recipientUsername,
+  recipientEmail,
+  verificationToken
+) => {
   const verificationLink = `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}`;
 
   try {
@@ -572,9 +638,12 @@ const verifyEmailAndSetPassword = async (req, res) => {
     const { password, confirmPassword } = req.body;
 
     if (!token) return res.status(400).json({ message: "Token is required" });
-    if (!password) return res.status(400).json({ message: `Password field is required.` });
+    if (!password)
+      return res.status(400).json({ message: `Password field is required.` });
     if (!confirmPassword)
-      return res.status(400).json({ message: `Confirm Password field is required.` });
+      return res
+        .status(400)
+        .json({ message: `Confirm Password field is required.` });
     if (password !== confirmPassword)
       return res.status(400).json({ message: `Passwords donot match.` });
 
@@ -657,7 +726,9 @@ const refreshToken = async (req, res) => {
     }
 
     //  Load real user & role
-    const userRes = await runQuery(`SELECT id, role FROM users WHERE id = $1`, [decoded.id]);
+    const userRes = await runQuery(`SELECT id, role FROM users WHERE id = $1`, [
+      decoded.id,
+    ]);
     if (userRes.rows.length === 0) {
       return res.status(401).json({ message: "Invalid user" });
     }
@@ -671,7 +742,9 @@ const refreshToken = async (req, res) => {
 
     return res.status(200).json({ access_token });
   } catch (err) {
-    return res.status(401).json({ message: "Invalid refresh token", error: err.message });
+    return res
+      .status(401)
+      .json({ message: "Invalid refresh token", error: err.message });
   }
 };
 
@@ -690,8 +763,13 @@ const changePassword = async (req, res) => {
     const { currentPassword, newPassword, confirmNewPassword } = req.body;
     const userId = req.user.id; // From token verification middleware
 
-    const need = requireAll({ currentPassword, newPassword, confirmNewPassword });
-    if (!need.ok) return res.status(400).json({ message: "All fields are required" });
+    const need = requireAll({
+      currentPassword,
+      newPassword,
+      confirmNewPassword,
+    });
+    if (!need.ok)
+      return res.status(400).json({ message: "All fields are required" });
 
     if (newPassword !== confirmNewPassword) {
       return res.status(400).json({ message: "New passwords do not match" });
@@ -831,80 +909,108 @@ const getProfileData = async (req, res) => {
 
 const forgotPassword = async (req, res) => {
   try {
-    const { email, client_type = 'web' } = req.body;
+    const { email, client_type = "web" } = req.body;
 
     if (!email) return res.status(400).json({ message: "Email is required" });
-    
-    if (!isEmailValid(email)) return res.status(400).json({ message: "Invalid email address" });
 
-    if (!['web', 'mobile'].includes(client_type)) {
-      return res.status(400).json({ message: "Invalid client_type. Must be 'web' or 'mobile'" });
+    if (!isEmailValid(email))
+      return res.status(400).json({ message: "Invalid email address" });
+
+    if (!["web", "mobile"].includes(client_type)) {
+      return res
+        .status(400)
+        .json({ message: "Invalid client_type. Must be 'web' or 'mobile'" });
     }
 
-    const userQuery = await pool.query(`SELECT id, username, email, is_verified FROM users WHERE email = $1`, [email]);
-    
+    const userQuery = await pool.query(
+      `SELECT id, username, email, is_verified FROM users WHERE email = $1`,
+      [email]
+    );
+
     if (userQuery.rows.length === 0) {
-        return res.status(200).json({ message: "If the email exists, a password reset link has been sent" });
+      return res
+        .status(200)
+        .json({
+          message: "If the email exists, a password reset link has been sent",
+        });
     }
 
     const user = userQuery.rows[0];
 
     if (!user.is_verified) {
-        const verificationToken = crypto.randomBytes(32).toString("hex");
-        const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); 
+      const verificationToken = crypto.randomBytes(32).toString("hex");
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
-        await pool.query(`DELETE FROM email_verification_tokens WHERE user_id = $1`, [user.id]);
+      await pool.query(
+        `DELETE FROM email_verification_tokens WHERE user_id = $1`,
+        [user.id]
+      );
 
-        await pool.query(`
+      await pool.query(
+        `
             INSERT INTO email_verification_tokens (user_id, token, expires_at) 
             VALUES ($1, $2, $3)`,
-            [user.id, verificationToken, expiresAt]);
+        [user.id, verificationToken, expiresAt]
+      );
 
-        await sendVerificationEmail(user.username, user.email, verificationToken);
-        
-        return res.status(200).json({ 
-            message: "Your email is not verified. A verification link has been sent to your email address." 
-        });
+      await sendVerificationEmail(user.username, user.email, verificationToken);
+
+      return res.status(200).json({
+        message:
+          "Your email is not verified. A verification link has been sent to your email address.",
+      });
     }
 
-    if (client_type === 'mobile') {
-        const otp = generateOTP();
-        const expiresAt = new Date(Date.now() + 10 * 60 * 1000); 
+    if (client_type === "mobile") {
+      const otp = generateOTP();
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
-        await pool.query(`DELETE FROM password_reset_otps WHERE user_id = $1`, [user.id]);
+      await pool.query(`DELETE FROM password_reset_otps WHERE user_id = $1`, [
+        user.id,
+      ]);
 
-        await pool.query(`
+      await pool.query(
+        `
             INSERT INTO password_reset_otps (user_id, otp, expires_at) 
             VALUES ($1, $2, $3)`,
-            [user.id, otp, expiresAt]);
+        [user.id, otp, expiresAt]
+      );
 
-        await sendPasswordResetOTPEmail(user.username, user.email, otp);
+      await sendPasswordResetOTPEmail(user.username, user.email, otp);
 
-        return res.status(200).json({
-            message: "If the email exists, a password reset OTP has been sent",
-        });
+      return res.status(200).json({
+        message: "If the email exists, a password reset OTP has been sent",
+      });
     } else {
+      const resetToken = crypto.randomBytes(32).toString("hex");
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
 
-        const resetToken = crypto.randomBytes(32).toString("hex");
-        const expiresAt = new Date(Date.now() + 60 * 60 * 1000); 
+      await pool.query(`DELETE FROM password_reset_tokens WHERE user_id = $1`, [
+        user.id,
+      ]);
 
-        await pool.query(`DELETE FROM password_reset_tokens WHERE user_id = $1`, [user.id]);
-
-        await pool.query(`
+      await pool.query(
+        `
             INSERT INTO password_reset_tokens (user_id, token, expires_at) 
             VALUES ($1, $2, $3)`,
-            [user.id, resetToken, expiresAt]);
+        [user.id, resetToken, expiresAt]
+      );
 
-        await sendPasswordResetEmail(user.username, user.email, resetToken);
+      await sendPasswordResetEmail(user.username, user.email, resetToken);
 
-        return res.status(200).json({
-            message: "If the email exists, a password reset link has been sent",
-        });
+      return res.status(200).json({
+        message: "If the email exists, a password reset link has been sent",
+      });
     }
   } catch (error) {
     console.error(`Error in forgot password: ${error.message}`);
-    if (error.code === "EMAIL_SEND_FAILED" || error.code === "EMAIL_CONFIG_MISSING") {
-      return res.status(502).json({ message: "Unable to send email right now" });
+    if (
+      error.code === "EMAIL_SEND_FAILED" ||
+      error.code === "EMAIL_CONFIG_MISSING"
+    ) {
+      return res
+        .status(502)
+        .json({ message: "Unable to send email right now" });
     }
     return res.status(500).json({ message: "Server Error" });
   }
@@ -916,7 +1022,8 @@ const resetPassword = async (req, res) => {
     const token = req.query.token;
     const { newPassword, confirmPassword } = req.body;
 
-    if (!token) return res.status(400).json({ message: "Reset token is required" });
+    if (!token)
+      return res.status(400).json({ message: "Reset token is required" });
     if (!newPassword || !confirmPassword)
       return res.status(400).json({ message: "All fields are required" });
     if (newPassword !== confirmPassword)
@@ -936,7 +1043,9 @@ const resetPassword = async (req, res) => {
     );
 
     if (tokenQuery.rows.length === 0) {
-      return res.status(400).json({ message: "Invalid or expired reset token" });
+      return res
+        .status(400)
+        .json({ message: "Invalid or expired reset token" });
     }
 
     const resetTokenData = tokenQuery.rows[0];
@@ -968,7 +1077,11 @@ const resetPassword = async (req, res) => {
   }
 };
 
-const sendPasswordResetEmail = async (recipientUsername, recipientEmail, resetToken) => {
+const sendPasswordResetEmail = async (
+  recipientUsername,
+  recipientEmail,
+  resetToken
+) => {
   const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
 
   try {
@@ -1152,9 +1265,7 @@ const verifyOTPAndResetPassword = async (req, res) => {
     );
 
     if (otpQuery.rows.length === 0) {
-      return res
-        .status(400)
-        .json({ message: "Invalid or expired OTP" });
+      return res.status(400).json({ message: "Invalid or expired OTP" });
     }
 
     const otpData = otpQuery.rows[0];
@@ -1189,7 +1300,9 @@ const verifyOTPAndResetPassword = async (req, res) => {
       client.release();
     }
   } catch (error) {
-    console.error(`Error verifying OTP and resetting password: ${error.message}`);
+    console.error(
+      `Error verifying OTP and resetting password: ${error.message}`
+    );
     return res.status(500).json({ message: "Server Error" });
   }
 };
@@ -1212,11 +1325,11 @@ const getAllUsers = async (req, res) => {
     const currentUserSocietyId = req.user.society_id;
 
     // Super admin can see all users, admin can only see users from their society
-    if (currentUserRole === 'admin' || currentUserRole === 'sub_admin') {
+    if (currentUserRole === "admin" || currentUserRole === "sub_admin") {
       const cond = `u.society_id = $${idx++} AND u.id != $${idx++}`;
       whereClause = `WHERE ${cond}`;
       values.push(currentUserSocietyId, currentUserId);
-    } else if (currentUserRole === 'super_admin') {
+    } else if (currentUserRole === "super_admin") {
       const cond = `u.id != $${idx++}`;
       whereClause = `WHERE ${cond}`;
       values.push(currentUserId);
@@ -1225,25 +1338,34 @@ const getAllUsers = async (req, res) => {
     // Handle role filtering
     if (role && role !== "all") {
       // Support comma-separated roles
-      const roles = role.split(',').map(r => r.trim()).filter(r => r);
+      const roles = role
+        .split(",")
+        .map((r) => r.trim())
+        .filter((r) => r);
       if (roles.length > 0) {
-        const rolePlaceholders = roles.map(() => `$${idx++}`).join(',');
+        const rolePlaceholders = roles.map(() => `$${idx++}`).join(",");
         const cond = `u.role IN (${rolePlaceholders})`;
-        whereClause = whereClause ? `${whereClause} AND ${cond}` : `WHERE ${cond}`;
+        whereClause = whereClause
+          ? `${whereClause} AND ${cond}`
+          : `WHERE ${cond}`;
         values.push(...roles);
       }
     }
 
     // Society filtering (only for super admin)
-    if (currentUserRole === 'super_admin' && societyId && societyId !== "all") {
+    if (currentUserRole === "super_admin" && societyId && societyId !== "all") {
       const cond = `u.society_id = $${idx++}`;
-      whereClause = whereClause ? `${whereClause} AND ${cond}` : `WHERE ${cond}`;
+      whereClause = whereClause
+        ? `${whereClause} AND ${cond}`
+        : `WHERE ${cond}`;
       values.push(societyId);
     }
 
     if (search) {
       const cond = `(u.first_name ILIKE $${idx} OR u.last_name ILIKE $${idx} OR u.email ILIKE $${idx} OR u.username ILIKE $${idx})`;
-      whereClause = whereClause ? `${whereClause} AND ${cond}` : `WHERE ${cond}`;
+      whereClause = whereClause
+        ? `${whereClause} AND ${cond}`
+        : `WHERE ${cond}`;
       values.push(`%${search}%`);
       idx++;
     }
@@ -1405,15 +1527,20 @@ const updateUser = async (req, res) => {
     const targetUser = userCheck.rows[0];
 
     // Authorization checks
-    if (currentUser.role === 'admin' || currentUser.role === 'sub_admin') {
+    if (currentUser.role === "admin" || currentUser.role === "sub_admin") {
       // Admin can only update users from their own society
       const adminSocietyCheck = await runQuery(
         `SELECT society_id FROM users WHERE id = $1`,
         [currentUser.id]
       );
-      
-      if (adminSocietyCheck.rows.length === 0 || !adminSocietyCheck.rows[0].society_id) {
-        return res.status(403).json({ message: "Admin must be associated with a society" });
+
+      if (
+        adminSocietyCheck.rows.length === 0 ||
+        !adminSocietyCheck.rows[0].society_id
+      ) {
+        return res
+          .status(403)
+          .json({ message: "Admin must be associated with a society" });
       }
 
       const targetSocietyCheck = await runQuery(
@@ -1421,22 +1548,34 @@ const updateUser = async (req, res) => {
         [userId]
       );
 
-      if (targetSocietyCheck.rows.length === 0 || 
-          targetSocietyCheck.rows[0].society_id !== adminSocietyCheck.rows[0].society_id) {
-        return res.status(403).json({ message: "Can only update users from your society" });
+      if (
+        targetSocietyCheck.rows.length === 0 ||
+        targetSocietyCheck.rows[0].society_id !==
+          adminSocietyCheck.rows[0].society_id
+      ) {
+        return res
+          .status(403)
+          .json({ message: "Can only update users from your society" });
       }
 
       // Admin cannot change roles to super_admin
-      if (role && role === 'super_admin') {
-        return res.status(403).json({ message: "Cannot assign super admin role" });
+      if (role && role === "super_admin") {
+        return res
+          .status(403)
+          .json({ message: "Cannot assign super admin role" });
       }
-    } else if (currentUser.role !== 'super_admin') {
+    } else if (currentUser.role !== "super_admin") {
       return res.status(403).json({ message: "Unauthorized to update users" });
     }
 
     // Prevent updating super_admin users (except by super_admin)
-    if (targetUser.role === 'super_admin' && currentUser.role !== 'super_admin') {
-      return res.status(403).json({ message: "Cannot update super admin users" });
+    if (
+      targetUser.role === "super_admin" &&
+      currentUser.role !== "super_admin"
+    ) {
+      return res
+        .status(403)
+        .json({ message: "Cannot update super admin users" });
     }
 
     // Build update query dynamically
@@ -1460,36 +1599,40 @@ const updateUser = async (req, res) => {
       if (!isEmailValid(email)) {
         return res.status(400).json({ message: "Invalid email address" });
       }
-      
+
       // Check email uniqueness (excluding current user)
       const emailCheck = await runQuery(
         `SELECT id FROM users WHERE email = $1 AND id != $2`,
         [email.trim(), userId]
       );
-      
+
       if (emailCheck.rows.length > 0) {
         return res.status(400).json({ message: "Email already in use" });
       }
-      
+
       fields.push(`email = $${paramIndex++}`);
       values.push(email.trim());
     }
     if (role !== undefined) {
       // Only super_admin can change roles
-      if (currentUser.role !== 'super_admin') {
-        return res.status(403).json({ message: "Only super admin can change user roles" });
+      if (currentUser.role !== "super_admin") {
+        return res
+          .status(403)
+          .json({ message: "Only super admin can change user roles" });
       }
-      
+
       // Prevent changing super_admin role
-      if (targetUser.role === 'super_admin' && role !== 'super_admin') {
-        return res.status(403).json({ message: "Cannot change super admin role" });
+      if (targetUser.role === "super_admin" && role !== "super_admin") {
+        return res
+          .status(403)
+          .json({ message: "Cannot change super admin role" });
       }
-      
+
       fields.push(`role = $${paramIndex++}`);
       values.push(role);
-      
+
       // Auto-enable MFA when role is changed to admin or super_admin
-      if (role === 'admin' || role === 'super_admin') {
+      if (role === "admin" || role === "super_admin") {
         fields.push(`mfa_enabled = TRUE`);
       }
     }
@@ -1504,7 +1647,7 @@ const updateUser = async (req, res) => {
 
     const updateQuery = `
       UPDATE users 
-      SET ${fields.join(', ')} 
+      SET ${fields.join(", ")} 
       WHERE id = $${paramIndex}
       RETURNING id, first_name, last_name, email, phone_number, role, is_verified, is_blocked, created_at, updated_at
     `;
@@ -1513,9 +1656,8 @@ const updateUser = async (req, res) => {
 
     return res.status(200).json({
       message: "User updated successfully",
-      user: result.rows[0]
+      user: result.rows[0],
     });
-
   } catch (error) {
     console.error("Error updating user:", error);
     return res.status(500).json({ message: "Internal server error" });
@@ -1546,32 +1688,46 @@ const blockUser = async (req, res) => {
     const targetUser = userCheck.rows[0];
 
     // Authorization checks
-    if (currentUser.role === 'admin' || currentUser.role === 'sub_admin') {
+    if (currentUser.role === "admin" || currentUser.role === "sub_admin") {
       // Admin can only block users from their own society
       const adminSocietyCheck = await runQuery(
         `SELECT society_id FROM users WHERE id = $1`,
         [currentUser.id]
       );
-      
-      if (adminSocietyCheck.rows.length === 0 || !adminSocietyCheck.rows[0].society_id) {
-        return res.status(403).json({ message: "Admin must be associated with a society" });
+
+      if (
+        adminSocietyCheck.rows.length === 0 ||
+        !adminSocietyCheck.rows[0].society_id
+      ) {
+        return res
+          .status(403)
+          .json({ message: "Admin must be associated with a society" });
       }
 
       if (targetUser.society_id !== adminSocietyCheck.rows[0].society_id) {
-        return res.status(403).json({ message: "Can only block users from your society" });
+        return res
+          .status(403)
+          .json({ message: "Can only block users from your society" });
       }
 
       // Admin cannot block super_admin users
-      if (targetUser.role === 'super_admin') {
-        return res.status(403).json({ message: "Cannot block super admin users" });
+      if (targetUser.role === "super_admin") {
+        return res
+          .status(403)
+          .json({ message: "Cannot block super admin users" });
       }
-    } else if (currentUser.role !== 'super_admin') {
+    } else if (currentUser.role !== "super_admin") {
       return res.status(403).json({ message: "Unauthorized to block users" });
     }
 
     // Prevent blocking super_admin users (except by super_admin)
-    if (targetUser.role === 'super_admin' && currentUser.role !== 'super_admin') {
-      return res.status(403).json({ message: "Cannot block super admin users" });
+    if (
+      targetUser.role === "super_admin" &&
+      currentUser.role !== "super_admin"
+    ) {
+      return res
+        .status(403)
+        .json({ message: "Cannot block super admin users" });
     }
 
     const result = await runQuery(
@@ -1606,32 +1762,46 @@ const deleteUser = async (req, res) => {
     const targetUser = userCheck.rows[0];
 
     // Authorization checks
-    if (currentUser.role === 'admin' || currentUser.role === 'sub_admin') {
+    if (currentUser.role === "admin" || currentUser.role === "sub_admin") {
       // Admin can only delete users from their own society
       const adminSocietyCheck = await runQuery(
         `SELECT society_id FROM users WHERE id = $1`,
         [currentUser.id]
       );
-      
-      if (adminSocietyCheck.rows.length === 0 || !adminSocietyCheck.rows[0].society_id) {
-        return res.status(403).json({ message: "Admin must be associated with a society" });
+
+      if (
+        adminSocietyCheck.rows.length === 0 ||
+        !adminSocietyCheck.rows[0].society_id
+      ) {
+        return res
+          .status(403)
+          .json({ message: "Admin must be associated with a society" });
       }
 
       if (targetUser.society_id !== adminSocietyCheck.rows[0].society_id) {
-        return res.status(403).json({ message: "Can only delete users from your society" });
+        return res
+          .status(403)
+          .json({ message: "Can only delete users from your society" });
       }
 
       // Admin cannot delete super_admin users
-      if (targetUser.role === 'super_admin') {
-        return res.status(403).json({ message: "Cannot delete super admin users" });
+      if (targetUser.role === "super_admin") {
+        return res
+          .status(403)
+          .json({ message: "Cannot delete super admin users" });
       }
-    } else if (currentUser.role !== 'super_admin') {
+    } else if (currentUser.role !== "super_admin") {
       return res.status(403).json({ message: "Unauthorized to delete users" });
     }
 
     // Prevent deleting super_admin users (except by super_admin)
-    if (targetUser.role === 'super_admin' && currentUser.role !== 'super_admin') {
-      return res.status(403).json({ message: "Cannot delete super admin users" });
+    if (
+      targetUser.role === "super_admin" &&
+      currentUser.role !== "super_admin"
+    ) {
+      return res
+        .status(403)
+        .json({ message: "Cannot delete super admin users" });
     }
 
     await runQuery(`DELETE FROM users WHERE id = $1`, [userId]);
@@ -1657,7 +1827,9 @@ const getSystemStats = async (req, res) => {
       GROUP BY role
     `);
 
-    const societyCount = await runQuery(`SELECT COUNT(*) as count FROM societies`);
+    const societyCount = await runQuery(
+      `SELECT COUNT(*) as count FROM societies`
+    );
 
     const recentActivity = await runQuery(`
       SELECT
@@ -1769,7 +1941,8 @@ const generateMFASecret = async (req, res) => {
       secret: cleanSecret,
       qrCode: qrCodeUrl,
       manualEntryKey: cleanSecret,
-      message: "MFA secret generated. Please verify with a TOTP code to enable MFA.",
+      message:
+        "MFA secret generated. Please verify with a TOTP code to enable MFA.",
     });
   } catch (error) {
     console.error("Error generating MFA secret:", error);
@@ -1803,7 +1976,9 @@ const enableMFA = async (req, res) => {
     const user = userQuery.rows[0];
 
     if (!user.totp_secret) {
-      return res.status(400).json({ message: "Please generate MFA secret first" });
+      return res
+        .status(400)
+        .json({ message: "Please generate MFA secret first" });
     }
 
     const cleanSecret = String(user.totp_secret).trim().replace(/\s/g, "");
@@ -1817,8 +1992,8 @@ const enableMFA = async (req, res) => {
     });
 
     if (!verified) {
-      return res.status(400).json({ 
-        message: "Invalid TOTP code. Please try again." 
+      return res.status(400).json({
+        message: "Invalid TOTP code. Please try again.",
       });
     }
 
@@ -1842,7 +2017,9 @@ const verifyMFA = async (req, res) => {
     const { email, totpCode } = req.body;
 
     if (!email || !totpCode) {
-      return res.status(400).json({ message: "Email and TOTP code are required" });
+      return res
+        .status(400)
+        .json({ message: "Email and TOTP code are required" });
     }
 
     const userQuery = await runQuery(
@@ -1857,7 +2034,9 @@ const verifyMFA = async (req, res) => {
     const user = userQuery.rows[0];
 
     if (!user.mfa_enabled || !user.totp_secret) {
-      return res.status(400).json({ message: "MFA is not enabled for this user" });
+      return res
+        .status(400)
+        .json({ message: "MFA is not enabled for this user" });
     }
 
     const cleanTotpCode = String(totpCode).trim().replace(/\s/g, "");

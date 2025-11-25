@@ -60,7 +60,7 @@ app.get("/health", (req, res) => {
 });
 
 app.get("/websocket/stats", verifyToken, (req, res) => {
-  if (req.user.role !== "super_admin" && req.user.role !== "admin") {
+  if (req.user.role !== "super_admin" || req.user.role !== "admin" || req.user.role !== "sub_admin") {
     return res.status(403).json({ message: "Forbidden" });
   }
 
