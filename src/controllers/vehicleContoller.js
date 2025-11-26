@@ -121,7 +121,7 @@ const getVehicles = async (req, res) => {
 const updateVehicle = async (req, res) => {
     try {
         const { id } = req.params;
-        const { plateNo, status, driverName } = req.body;
+        const { plateNo, status, driverId } = req.body;
 
         const userRole = req.user.role;
 
@@ -145,6 +145,22 @@ const updateVehicle = async (req, res) => {
         let paramCounter = 1;
 
         if (plateNo !== undefined) {
+            // Check if the same plate number is assigned to multiple drivers
+            const plateCheckQuery = `
+                SELECT id, user_id FROM vehicle 
+                WHERE plate_no = $1 AND id != $2
+            `;
+            const plateCheckResult = await pool.query(plateCheckQuery, [plateNo, id]);
+
+            if (plateCheckResult.rows.length > 0) {
+                const conflictingVehicle = plateCheckResult.rows[0];
+                if (conflictingVehicle.user_id) {
+                    return res.status(400).json({
+                        message: "This plate number is already assigned to another driver",
+                    });
+                }
+            }
+
             updateFields.push(`plate_no = $${paramCounter}`);
             updateValues.push(plateNo);
             paramCounter++;
@@ -156,34 +172,23 @@ const updateVehicle = async (req, res) => {
             paramCounter++;
         }
 
-        if (driverName !== undefined) {
+        if (driverId !== undefined) {
             let driverUserId = null;
             let finalDriverName = null;
 
-            if (driverName && driverName.trim() !== "") {
+            if (driverId) {
+                // Fetch driver by ID instead of name
                 const driverQuery = `
                     SELECT id, first_name, last_name, is_verified
                     FROM users 
-                    WHERE CONCAT(first_name, ' ', last_name) = $${paramCounter}
-                       OR first_name = $${paramCounter}
-                       OR last_name = $${paramCounter}
-                       OR LOWER(CONCAT(first_name, ' ', last_name)) = LOWER($${paramCounter})
-                       OR LOWER(first_name) = LOWER($${paramCounter})
-                       OR LOWER(last_name) = LOWER($${paramCounter})
+                    WHERE id = $1
                 `;
 
-                const driverResult = await pool.query(driverQuery, [driverName.trim()]);
+                const driverResult = await pool.query(driverQuery, [driverId]);
 
                 if (driverResult.rows.length === 0) {
                     return res.status(404).json({
                         message: "Driver not found in users table",
-                    });
-                }
-
-                if (driverResult.rows.length > 1) {
-                    return res.status(400).json({
-                        message:
-                            "Multiple drivers found with that name. Please be more specific.",
                     });
                 }
 
@@ -194,9 +199,45 @@ const updateVehicle = async (req, res) => {
                         message: "Driver is not verified",
                     });
                 }
-                
+
+                // Check if multiple vehicles are assigned to the same driver
+                const driverVehicleCheckQuery = `
+                    SELECT id FROM vehicle 
+                    WHERE user_id = $1 AND id != $2
+                `;
+                const driverVehicleCheckResult = await pool.query(driverVehicleCheckQuery, [driverId, id]);
+
+                if (driverVehicleCheckResult.rows.length > 0) {
+                    return res.status(400).json({
+                        message: "This driver is already assigned to another vehicle",
+                    });
+                }
+
+                // Check if the current vehicle's plate number is assigned to other drivers
+                const currentVehicleQuery = `SELECT plate_no FROM vehicle WHERE id = $1`;
+                const currentVehicleResult = await pool.query(currentVehicleQuery, [id]);
+                const currentPlateNo = currentVehicleResult.rows[0]?.plate_no;
+
+                if (currentPlateNo) {
+                    const plateDriverCheckQuery = `
+                        SELECT id FROM vehicle 
+                        WHERE plate_no = $1 AND user_id IS NOT NULL AND id != $2
+                    `;
+                    const plateDriverCheckResult = await pool.query(plateDriverCheckQuery, [currentPlateNo, id]);
+
+                    if (plateDriverCheckResult.rows.length > 0) {
+                        return res.status(400).json({
+                            message: "This vehicle's plate number is already assigned to another driver",
+                        });
+                    }
+                }
+
                 driverUserId = driver.id;
                 finalDriverName = `${driver.first_name} ${driver.last_name}`;
+            } else {
+                // If driverId is null/empty, remove driver assignment
+                driverUserId = null;
+                finalDriverName = null;
             }
 
             updateFields.push(`user_id = $${paramCounter}`);
@@ -228,12 +269,12 @@ const updateVehicle = async (req, res) => {
         const updatedVehicle = updateResult.rows[0];
 
         if(req.user.role === "sub_admin"){
-      await logSubAdminActivity({
-        subAdmin: req.user.id,
-        activityType: "UPDATE_VEHICLE",
-        description: `Sub Admin ${req.user.id} updated data of vehicle with id: ${id} ${Date.now()}`,
-      });
-    }
+            await logSubAdminActivity({
+                subAdmin: req.user.id,
+                activityType: "UPDATE_VEHICLE",
+                description: `Sub Admin ${req.user.id} updated data of vehicle with id: ${id} ${Date.now()}`,
+            });
+        }
 
         res.status(200).json({
             message: "Vehicle updated successfully",
