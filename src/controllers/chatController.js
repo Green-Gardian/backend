@@ -77,7 +77,6 @@ exports.addUserToChat = async (req, res) => {
   }
 };
 
-
 //Renove user to a chat
 exports.removeUserFromChat = async (req, res) => {
   const { chatId, userId } = req.body;

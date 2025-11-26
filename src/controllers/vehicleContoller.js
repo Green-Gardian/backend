@@ -15,6 +15,17 @@ const addVehicle = async (req, res) => {
         let userId = null;
         let finalDriverName = null;
 
+
+        const vehicleCheckQuery = `SELECT * FROM vehicle WHERE plate_no = $1`;
+
+        const vehicleCheckResult = await pool.query(vehicleCheckQuery, [plateNo]);
+
+        if (vehicleCheckResult.rows.length > 0) {
+            return res.status(400).json({
+                message: "Vehicle with this plate number already exists",
+            });
+        }
+
         if (driverName && driverName.trim() !== "") {
             const driverQuery = `
                 SELECT id, first_name, last_name, username, is_verified
