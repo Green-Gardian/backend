@@ -2,9 +2,105 @@ const { pool } = require("../config/db");
 
 const addVehicle = async (req, res) => {
     try {
-        const { plateNo, status, driverName } = req.body;
+        const { vehicleId, driverId, status } = req.body;
 
         const userRole = req.user.role;
+
+        // New flow: Admin assigns an existing vehicle to a driver
+        if (vehicleId) {
+            if (!driverId || !status) {
+                return res.status(400).json({
+                    message: "Driver ID and status are required for vehicle assignment",
+                });
+            }
+
+            // Check if vehicle exists
+            const vehicleCheckQuery = `SELECT * FROM vehicle WHERE id = $1`;
+            const vehicleCheckResult = await pool.query(vehicleCheckQuery, [vehicleId]);
+
+            if (vehicleCheckResult.rows.length === 0) {
+                return res.status(404).json({
+                    message: "Vehicle not found",
+                });
+            }
+
+            const vehicle = vehicleCheckResult.rows[0];
+
+            // Check if vehicle is blocked
+            if (vehicle.is_blocked) {
+                return res.status(400).json({
+                    message: "Cannot assign a blocked vehicle",
+                });
+            }
+
+            // Check if vehicle is already assigned
+            if (vehicle.user_id) {
+                return res.status(400).json({
+                    message: "Vehicle is already assigned to another driver",
+                });
+            }
+
+            // Get driver information
+            const driverQuery = `
+                SELECT id, first_name, last_name, username, is_verified
+                FROM users WHERE id = $1
+            `;
+
+            const driverResult = await pool.query(driverQuery, [driverId]);
+
+            if (driverResult.rows.length === 0) {
+                return res.status(404).json({
+                    message: "Driver not found",
+                });
+            }
+
+            const driver = driverResult.rows[0];
+
+            if (!driver.is_verified) {
+                return res.status(400).json({
+                    message: "Driver is not verified",
+                });
+            }
+
+            // Check if driver already has a vehicle assigned
+            const driverVehicleCheckQuery = `
+                SELECT id FROM vehicle 
+                WHERE user_id = $1
+            `;
+            const driverVehicleCheckResult = await pool.query(driverVehicleCheckQuery, [driverId]);
+
+            if (driverVehicleCheckResult.rows.length > 0) {
+                return res.status(400).json({
+                    message: "This driver is already assigned to another vehicle",
+                });
+            }
+
+            // Assign vehicle to driver
+            const assignQuery = `
+                UPDATE vehicle 
+                SET user_id = $1, driver_name = $2, status = $3, updated_at = CURRENT_TIMESTAMP
+                WHERE id = $4
+                RETURNING *
+            `;
+
+            const finalDriverName = `${driver.username}`;
+            const result = await pool.query(assignQuery, [
+                driverId,
+                finalDriverName,
+                status,
+                vehicleId,
+            ]);
+
+            const vehicleData = result.rows[0];
+
+            return res.status(200).json({
+                message: "Vehicle assigned to driver successfully",
+                vehicle: vehicleData,
+            });
+        }
+
+        // Legacy flow: Create new vehicle and optionally assign (kept for backward compatibility)
+        const { plateNo, driverName } = req.body;
 
         if (!plateNo || !status) {
             return res.status(400).json({
@@ -150,7 +246,7 @@ const updateVehicle = async (req, res) => {
                 message: "Vehicle not found",
             });
         }
-        
+
         const updateFields = [];
         const updateValues = [];
         let paramCounter = 1;
@@ -279,7 +375,7 @@ const updateVehicle = async (req, res) => {
         const updateResult = await pool.query(updateQuery, updateValues);
         const updatedVehicle = updateResult.rows[0];
 
-        if(req.user.role === "sub_admin"){
+        if (req.user.role === "sub_admin") {
             await logSubAdminActivity({
                 subAdmin: req.user.id,
                 activityType: "UPDATE_VEHICLE",
@@ -300,46 +396,8 @@ const updateVehicle = async (req, res) => {
     }
 };
 
-const deleteVehicle = async (req, res) => {
-    try {
-        const { id } = req.params;
-        const userRole = req.user.role;
-        console.log("id : ", id);
-
-        if (!id) {
-            return res.status(400).json({
-                message: "Vehicle ID is required",
-            });
-        }
-
-        const getQuery = `SELECT * FROM vehicle WHERE id = $1`;
-        const result = await pool.query(getQuery, [id]);
-
-        if (result.rows.length === 0) {
-            return res.status(404).json({
-                message: "Vehicle not found",
-            });
-        }
-
-        const deleteQuery = `DELETE FROM vehicle WHERE id = $1 RETURNING *`;
-        const deleteResult = await pool.query(deleteQuery, [id]);
-
-        res.status(200).json({
-            message: "Vehicle deleted successfully",
-            vehicle: deleteResult.rows[0],
-        });
-    } catch (error) {
-        console.error("Error deleting vehicle:", error);
-        res.status(500).json({
-            message: "Internal server error",
-            error: error.message,
-        });
-    }
-};
-
 module.exports = {
     addVehicle,
     getVehicles,
     updateVehicle,
-    deleteVehicle,
 };

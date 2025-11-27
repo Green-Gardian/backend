@@ -77,8 +77,8 @@ const getCustomerAnalytics = async (req, res) => {
 
     const totalCustomersChange = calculatePercentageChange(totalCustomers, previousMonthTotal);
     const activeCustomersChange = calculatePercentageChange(activeCustomers, previousMonthTotal);
-    const newThisMonthChange = previousMonthTotal > 0 
-      ? ((newThisMonth - previousMonthTotal) / previousMonthTotal) * 100 
+    const newThisMonthChange = previousMonthTotal > 0
+      ? ((newThisMonth - previousMonthTotal) / previousMonthTotal) * 100
       : (newThisMonth > 0 ? 100 : 0);
     const premiumUsersChange = 6.8; // Placeholder
 
@@ -255,20 +255,8 @@ const getVehicleAnalytics = async (req, res) => {
     let vehicleFilter = "";
     let queryParams = [];
 
-    // If admin, filter vehicles by their society's users (validate society_id is a number)
-    if (currentUser.role === "admin" && currentUser.society_id) {
-      const societyId = parseInt(currentUser.society_id);
-      if (!isNaN(societyId)) {
-        vehicleFilter = `
-          AND EXISTS (
-            SELECT 1 FROM users u 
-            WHERE u.id = v.user_id 
-            AND u.society_id = $1
-          )
-        `;
-        queryParams = [societyId];
-      }
-    }
+    // Note: Vehicle table doesn't have society_id, so we don't filter by society
+    // This matches the behavior of getVehicles endpoint which returns all vehicles for admins
 
     // Total Vehicles
     const totalVehiclesQuery = `
@@ -279,11 +267,11 @@ const getVehicleAnalytics = async (req, res) => {
     const totalVehiclesResult = await pool.query(totalVehiclesQuery, queryParams);
     const totalVehicles = parseInt(totalVehiclesResult.rows[0].count) || 0;
 
-    // Operational Vehicles (status = 'active')
+    // Operational Vehicles (status = 'active' or 'available')
     const operationalQuery = `
       SELECT COUNT(*) as count
       FROM vehicle v
-      WHERE v.status = 'active' ${vehicleFilter}
+      WHERE v.status IN ('active', 'available') ${vehicleFilter}
     `;
     const operationalResult = await pool.query(operationalQuery, queryParams);
     const operational = parseInt(operationalResult.rows[0].count) || 0;
@@ -306,14 +294,14 @@ const getVehicleAnalytics = async (req, res) => {
       LEFT JOIN service_requests sr ON sr.driver_id = v.user_id
         AND sr.created_at >= CURRENT_DATE - INTERVAL '7 days'
         AND sr.status IN ('completed', 'in_progress')
-      WHERE v.status = 'active' ${vehicleFilter}
+      WHERE v.status IN ('active', 'available') ${vehicleFilter}
     `;
     const utilizationResult = await pool.query(utilizationQuery, queryParams);
-    
+
     const totalRequests = parseInt(utilizationResult.rows[0].total_requests) || 0;
     const activeVehicles = parseInt(utilizationResult.rows[0].active_vehicles) || 0;
-    const avgUtilization = activeVehicles > 0 
-      ? Math.round((totalRequests / (activeVehicles * 7)) * 100) 
+    const avgUtilization = activeVehicles > 0
+      ? Math.round((totalRequests / (activeVehicles * 7)) * 100)
       : 0;
     const avgUtilizationPercent = Math.min(avgUtilization, 100); // Cap at 100%
 
@@ -334,7 +322,7 @@ const getVehicleAnalytics = async (req, res) => {
       LEFT JOIN service_requests sr ON sr.driver_id = v.user_id
         AND sr.created_at >= CURRENT_DATE - INTERVAL '6 days'
         AND sr.status IN ('completed', 'in_progress')
-      WHERE v.status = 'active' ${vehicleFilter}
+      WHERE v.status IN ('active', 'available') ${vehicleFilter}
       GROUP BY DATE_TRUNC('day', sr.created_at)
       ORDER BY DATE_TRUNC('day', sr.created_at)
     `;
@@ -347,15 +335,15 @@ const getVehicleAnalytics = async (req, res) => {
       const date = new Date(today);
       date.setDate(date.getDate() - i);
       const dayName = daysOfWeek[date.getDay() === 0 ? 6 : date.getDay() - 1];
-      
+
       const dayData = utilizationChartResult.rows.find(
         row => row.day === dayName
       );
-      
+
       const requests = dayData ? parseInt(dayData.requests) || 0 : 0;
       const vehicles = dayData ? parseInt(dayData.vehicles) || 0 : activeVehicles || 1;
       const utilization = vehicles > 0 ? Math.round((requests / vehicles) * 100) : 0;
-      
+
       utilizationData.push({
         day: dayName,
         utilization: Math.min(utilization, 100), // Cap at 100%

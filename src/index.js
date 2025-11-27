@@ -16,6 +16,7 @@ const { verifyToken } = require("./middlewares/authMiddleware");
 // Import routes
 const authRouter = require("./routes/authRoutes");
 const vehicleRouter = require("./routes/vehicleRoutes");
+const superAdminVehicleRouter = require("./routes/superAdminVehicleRoutes");
 const societyRouter = require("./routes/societyRoutes");
 const licenseRouter = require("./routes/licenseRoutes");
 const driverRouter = require("./routes/driverRoutes");
@@ -44,6 +45,7 @@ app.use(express.urlencoded({ limit: '10mb', extended: true }));
 // Routes
 app.use("/auth", authRouter);
 app.use("/vehicle", verifyToken, vehicleRouter);
+app.use("/super-admin/vehicle", verifyToken, superAdminVehicleRouter);
 app.use("/society", verifyToken, societyRouter);
 app.use("/license", verifyToken, licenseRouter);
 app.use("/driver", verifyToken, driverRouter);
