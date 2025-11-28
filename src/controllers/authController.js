@@ -594,6 +594,10 @@ const signIn = async (req, res) => {
       [user.id, tokens.refresh_token]
     );
 
+    const userSociety = await runQuery(`SELECT * FROM societies WHERE id = $1`, [
+      user.society_id,
+    ]);
+
     const response = {
       message: "User logged in successfully",
       access_token: tokens.access_token,
@@ -602,6 +606,7 @@ const signIn = async (req, res) => {
       is_verified: user.is_verified,
       role: user.role,
       society_id: user.society_id || null,
+      society: userSociety.rows[0].society_name,
     };
 
     return res.status(200).json(response);
