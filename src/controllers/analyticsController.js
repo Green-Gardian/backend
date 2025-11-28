@@ -8,7 +8,7 @@ const getCustomerAnalytics = async (req, res) => {
     let queryParams = [];
 
     // If admin, filter by their society (validate society_id is a number)
-    if (currentUser.role === "admin" && currentUser.society_id) {
+    if ((currentUser.role === "admin" || currentUser.role === "sub_admin") && currentUser.society_id) {
       const societyId = parseInt(currentUser.society_id);
       if (!isNaN(societyId)) {
         societyFilter = `AND u.society_id = $1`;
@@ -152,7 +152,7 @@ const getStaffAnalytics = async (req, res) => {
     let queryParams = [];
 
     // If admin, filter by their society (validate society_id is a number)
-    if (currentUser.role === "admin" && currentUser.society_id) {
+    if ((currentUser.role === "admin" || currentUser.role === "sub_admin") && currentUser.society_id) {
       const societyId = parseInt(currentUser.society_id);
       if (!isNaN(societyId)) {
         societyFilter = `AND u.society_id = $1`;
