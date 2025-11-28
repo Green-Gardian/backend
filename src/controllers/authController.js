@@ -1662,12 +1662,12 @@ const updateUser = async (req, res) => {
       values.push(email.trim());
     }
     if (role !== undefined) {
-      // Only super_admin can change roles
-      if (currentUser.role !== "super_admin") {
-        return res
-          .status(403)
-          .json({ message: "Only super admin can change user roles" });
-      }
+      // // Only super_admin can change roles
+      // if (currentUser.role !== "super_admin") {
+      //   return res
+      //     .status(403)
+      //     .json({ message: "Only super admin can change user roles" });
+      // }
 
       // Prevent changing super_admin role
       if (targetUser.role === "super_admin" && role !== "super_admin") {
