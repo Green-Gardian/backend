@@ -3,6 +3,7 @@ const { pool } = require("../config/db");
 const crypto = require("crypto");
 const nodemailer = require("nodemailer");
 require("dotenv").config();
+const { logSubAdminActivity } = require("../services/subAdminLogger");
 
 /* -------------------------------------------------------
  * Helpers (DRY + validation)

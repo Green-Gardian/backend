@@ -9,6 +9,7 @@ const speakeasy = require("speakeasy");
 const QRCode = require("qrcode");
 const { generateTokens } = require("../utils/generateToken");
 const { hashPassword, comparePassword } = require("../utils/hashPassword");
+const { logSubAdminActivity } = require("../services/subAdminLogger");
 
 // Generate OTP function
 const generateOTP = () => {
@@ -219,9 +220,9 @@ const addAdminAndStaff = async (req, res) => {
     const userInsert = await client.query(
       role === "super_admin"
         ? `INSERT INTO users (first_name, last_name, username, phone_number, email, role, mfa_enabled,created_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`
         : `INSERT INTO users (first_name, last_name, username, phone_number, email, role, society_id, mfa_enabled,created_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
       role === "super_admin"
         ? [
             firstName.trim(),
@@ -492,13 +493,13 @@ const signIn = async (req, res) => {
 
     if (user.role === "sub_admin") {
       await logSubAdminActivity({
-        subAdmin: user,
+        subAdmin: user.id,
         activityType: "LOGIN",
-        description: `Sub Admin ${user.firstName} ${user.lastName} Logged in at ${Date.now()}`,
+        description: `Sub Admin ${user.first_name} ${user.last_name} Logged in at ${Date.now()}`,
       });
     }
 
-    const isAdmin = user.role === "admin" || user.role === "super_admin";
+    const isAdmin = user.role === "admin" || user.role === "super_admin" || user.role === "sub_admin";
     const mfaEnabled = user.mfa_enabled || false;
     const hasSecret = !!user.totp_secret;
 
@@ -537,6 +538,7 @@ const signIn = async (req, res) => {
         if (!verified) {
           return res.status(400).json({ message: "Invalid TOTP code" });
         }
+        // TOTP verified successfully, continue to generate tokens below
       } else {
         const tokens = generateTokens(user);
 
@@ -594,10 +596,12 @@ const signIn = async (req, res) => {
 
     const response = {
       message: "User logged in successfully",
-      ...tokens,
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
       username: user.username,
       is_verified: user.is_verified,
       role: user.role,
+      society_id: user.society_id || null,
     };
 
     return res.status(200).json(response);
@@ -1792,7 +1796,7 @@ const blockUser = async (req, res) => {
       await logSubAdminActivity({
         subAdmin: req.user.id,
         activityType: "BLOCK_USER",
-        description: `Sub Admin ${req.user.id} blocked user with email: ${email} ${Date.now()}`,
+        description: `Sub Admin ${req.user.id} ${isBlocked ? 'blocked' : 'unblocked'} user with email: ${result.rows[0].email} at ${Date.now()}`,
       });
     }
 
