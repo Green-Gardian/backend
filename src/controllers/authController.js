@@ -503,6 +503,10 @@ const signIn = async (req, res) => {
     const mfaEnabled = user.mfa_enabled || false;
     const hasSecret = !!user.totp_secret;
 
+    const userSociety = await runQuery(`SELECT * FROM societies WHERE id = $1`, [
+      user.society_id,
+    ]);
+
     if (isAdmin) {
       if (!mfaEnabled) {
         await runQuery(`UPDATE users SET mfa_enabled = TRUE WHERE id = $1`, [
@@ -557,6 +561,8 @@ const signIn = async (req, res) => {
           role: user.role,
           society_id: user.society_id,
           requiresMFASetup: true,
+          society: userSociety.rows[0].society_name,
+
         });
       }
     } else if (mfaEnabled && hasSecret) {
@@ -594,9 +600,6 @@ const signIn = async (req, res) => {
       [user.id, tokens.refresh_token]
     );
 
-    const userSociety = await runQuery(`SELECT * FROM societies WHERE id = $1`, [
-      user.society_id,
-    ]);
 
     const response = {
       message: "User logged in successfully",
