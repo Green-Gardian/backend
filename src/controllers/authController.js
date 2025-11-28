@@ -219,9 +219,9 @@ const addAdminAndStaff = async (req, res) => {
     const userInsert = await client.query(
       role === "super_admin"
         ? `INSERT INTO users (first_name, last_name, username, phone_number, email, role, mfa_enabled,created_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`
         : `INSERT INTO users (first_name, last_name, username, phone_number, email, role, society_id, mfa_enabled,created_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
       role === "super_admin"
         ? [
             firstName.trim(),
@@ -592,12 +592,17 @@ const signIn = async (req, res) => {
       [user.id, tokens.refresh_token]
     );
 
+    const userSociety = await runQuery(`SELECT * FROM societies WHERE id = $1`, [
+      user.society_id,
+    ]);
+
     const response = {
       message: "User logged in successfully",
       ...tokens,
       username: user.username,
       is_verified: user.is_verified,
       role: user.role,
+      society: userSociety.rows[0].society_name,
     };
 
     return res.status(200).json(response);

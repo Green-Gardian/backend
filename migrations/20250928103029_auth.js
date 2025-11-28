@@ -8,7 +8,7 @@ exports.up = function(knex) {
     -- Add a new check constraint with the new role included
     ALTER TABLE users
     ADD CONSTRAINT users_role_check
-    CHECK (role IN ('driver', 'customer_support', 'admin', 'super_admin', 'resident'));
+    CHECK (role IN ('driver', 'customer_support', 'admin', 'super_admin', 'resident', 'sub_admin));
   `);
 };
 
