@@ -465,7 +465,6 @@ const signIn = async (req, res) => {
         .json({ message: "Account has been blocked. Please contact support." });
     }
 
-    // Check if user's society is blocked (only for users with a society_id)
     if (user.society_id) {
       const societyCheck = await runQuery(
         `SELECT is_blocked FROM societies WHERE id = $1`,
@@ -559,10 +558,9 @@ const signIn = async (req, res) => {
           username: user.username,
           is_verified: user.is_verified,
           role: user.role,
-          society_id: user.society_id,
+          society_id: user.society_id ? userSociety.rows[0].society_name : null,
           requiresMFASetup: true,
-          society: userSociety.rows[0].society_name,
-
+          society: userSociety?.rows[0]?.society_name ? userSociety.rows[0].society_name : "",
         });
       }
     } else if (mfaEnabled && hasSecret) {
@@ -608,8 +606,8 @@ const signIn = async (req, res) => {
       username: user.username,
       is_verified: user.is_verified,
       role: user.role,
-      society_id: user.society_id || null,
-      society: userSociety.rows[0].society_name,
+      society_id: user.society_id ? userSociety.rows[0].society_name : null,
+      society: userSociety?.rows[0]?.society_name ? userSociety.rows[0].society_name : "",
     };
 
     return res.status(200).json(response);

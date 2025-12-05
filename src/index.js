@@ -25,6 +25,8 @@ const serviceRouter = require("./routes/residentServiceRoutes");
 const chatRouter = require("./routes/chatRoutes");
 const analyticsRouter = require("./routes/analyticsRoutes");
 const subAdminRouter = require("./routes/subAdminRoutes");
+const systemFeedbackRouter = require("./routes/systemFeedbackRoutes");
+const sentimentAnalyticsRouter = require("./routes/sentimentAnalyticsRoutes");
 
 const PORT = process.env.PORT || 3001;
 const app = express();
@@ -54,6 +56,8 @@ app.use("/services", verifyToken, serviceRouter);
 app.use("/chat", verifyToken, chatRouter);
 app.use("/analytics", verifyToken, analyticsRouter);
 app.use("/sub-admin", verifyToken, subAdminRouter);
+app.use("/feedback/system", verifyToken, systemFeedbackRouter);
+app.use("/analytics/sentiment", verifyToken, sentimentAnalyticsRouter);
 
 
 // Health endpoints

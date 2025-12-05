@@ -1,5 +1,6 @@
 // controllers/residentServiceController.js
 const { pool } = require("../config/db");
+const sentimentService = require("../services/sentimentAnalysisService");
 
 
 /** Parse positive int safely; returns fallback for invalid input. */
