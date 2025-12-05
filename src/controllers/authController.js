@@ -561,7 +561,7 @@ const signIn = async (req, res) => {
           role: user.role,
           society_id: user.society_id,
           requiresMFASetup: true,
-          society: userSociety.rows[0].society_name,
+          society: userSociety.rows.length > 0 ? userSociety.rows[0].society_name : null,
 
         });
       }
@@ -609,7 +609,7 @@ const signIn = async (req, res) => {
       is_verified: user.is_verified,
       role: user.role,
       society_id: user.society_id || null,
-      society: userSociety.rows[0].society_name,
+      society: userSociety.rows.length > 0 ? userSociety.rows[0].society_name : null,
     };
 
     return res.status(200).json(response);
