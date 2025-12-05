@@ -560,7 +560,8 @@ const signIn = async (req, res) => {
           role: user.role,
           society_id: user.society_id ? userSociety.rows[0].society_name : null,
           requiresMFASetup: true,
-          society: userSociety?.rows[0]?.society_name ? userSociety.rows[0].society_name : "",
+          society: userSociety.rows.length > 0 ? userSociety.rows[0].society_name : null,
+
         });
       }
     } else if (mfaEnabled && hasSecret) {
@@ -606,8 +607,8 @@ const signIn = async (req, res) => {
       username: user.username,
       is_verified: user.is_verified,
       role: user.role,
-      society_id: user.society_id ? userSociety.rows[0].society_name : null,
-      society: userSociety?.rows[0]?.society_name ? userSociety.rows[0].society_name : "",
+      society_id: user.society_id || null,
+      society: userSociety.rows.length > 0 ? userSociety.rows[0].society_name : null,
     };
 
     return res.status(200).json(response);

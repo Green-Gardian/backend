@@ -27,6 +27,8 @@ const analyticsRouter = require("./routes/analyticsRoutes");
 const subAdminRouter = require("./routes/subAdminRoutes");
 const systemFeedbackRouter = require("./routes/systemFeedbackRoutes");
 const sentimentAnalyticsRouter = require("./routes/sentimentAnalyticsRoutes");
+const binRouter = require("./routes/binRoutes");
+const binSimulator = require("./services/binSimulator");
 
 const PORT = process.env.PORT || 3001;
 const app = express();
@@ -59,6 +61,9 @@ app.use("/sub-admin", verifyToken, subAdminRouter);
 app.use("/feedback/system", verifyToken, systemFeedbackRouter);
 app.use("/analytics/sentiment", verifyToken, sentimentAnalyticsRouter);
 
+// Bins routes (requires authentication)
+app.use("/bins", verifyToken, binRouter);
+
 
 // Health endpoints
 app.get("/health", (req, res) => {
@@ -84,4 +89,10 @@ app.get("/websocket/stats", verifyToken, (req, res) => {
 // Start server
 server.listen(PORT, () => {
   console.log(`Server is running on PORT:${PORT}`);
+  // start bin simulator
+  try {
+    binSimulator.start();
+  } catch (err) {
+    console.error('Failed to start bin simulator', err);
+  }
 });
