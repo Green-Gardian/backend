@@ -60,6 +60,17 @@ async function tick() {
       // persist
       const updated = await binModel.updateBin(b.id, updatesForBin);
       updates.push(updated);
+      
+      // AUTO-TASK: Invoke assignment logic for simulator updates
+      try {
+        // We import assignmentService dynamically or at top to avoid circular dependency issues if any
+        // But binSimulator is a service, assignmentService is a service. Should be fine.
+        const assignmentService = require('./assignmentService');
+        await assignmentService.checkAndCreateTask(updated, websocketService);
+        await assignmentService.checkAndCompleteTask(updated, websocketService);
+      } catch (simErr) {
+        console.error('Bin simulator auto-task error:', simErr);
+      }
     }
 
     if (updates.length > 0) {
