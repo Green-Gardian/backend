@@ -89,9 +89,12 @@ async function findBestDriverAI(societyId, binLat, binLon, fillLevel) {
   console.log("🤖 Gemini AI Response:", JSON.stringify(aiResult, null, 2));
   
   if (aiResult && aiResult.driver_id) {
-    const chosen = candidates.find(c => c.id === aiResult.driver_id);
+    // pick hydrated driver so we have lat/lng
+    const chosen = hydratedDrivers.find(h => h.id === aiResult.driver_id);
     if (chosen) {
-      return { driver: chosen, score: 0, reason: aiResult.reason, isAI: true };
+      // attach name parts if available
+      const candidateMeta = candidates.find(c => c.id === chosen.id) || {};
+      return { driver: { id: chosen.id, first_name: candidateMeta.first_name, last_name: candidateMeta.last_name, latitude: chosen.latitude, longitude: chosen.longitude }, score: 0, reason: aiResult.reason, isAI: true };
     }
   }
 
@@ -133,7 +136,8 @@ async function findBestDriver(societyId, binLat, binLon) {
     const score = distance * 1 + workload * 50;
     if (score < bestScore) {
       bestScore = score;
-      best = { driver: d, distance, workload, score };
+      // include lat/lng on returned driver object
+      best = { driver: { ...d, latitude: parseFloat(loc.latitude), longitude: parseFloat(loc.longitude) }, distance, workload, score };
     }
   }
 
