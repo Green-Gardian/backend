@@ -1,10 +1,11 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { pool } = require('../config/db');
 
-// Initialize Gemini
-// Ensure GEMINI_API_KEY is in your .env file
+// Initialize Gemini client (API key expected in .env as GEMINI_API_KEY)
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+// Single model used by this service (no fallbacks)
+const SELECTED_MODEL = 'gemini-2.5-flash-lite';
 
 class GeminiService {
   /**
@@ -21,10 +22,18 @@ class GeminiService {
       }
 
       const prompt = this.constructPrompt(context);
-      
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      const text = response.text();
+      let text = null;
+
+      try {
+        const mdl = genAI.getGenerativeModel({ model: SELECTED_MODEL });
+        const result = await mdl.generateContent(prompt);
+        const response = await result.response;
+        text = response.text();
+        console.log(`[GeminiService] Model '${SELECTED_MODEL}' succeeded`);
+      } catch (err) {
+        console.error(`[GeminiService] Model '${SELECTED_MODEL}' failed:`, err && err.status ? `${err.status} ${err.statusText}` : err.message || err);
+        return null;
+      }
       
       // Extract JSON from response (handle potential markdown formatting)
       const jsonStr = this.extractJson(text);

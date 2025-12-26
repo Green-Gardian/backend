@@ -42,37 +42,24 @@ async function findBestDriverAI(societyId, binLat, binLon, fillLevel) {
   let candidates = await getCandidateDrivers(societyId);
   
   if (!candidates || candidates.length === 0) return null;
-
-  const hydratedDrivers = [];
+  // Build full driver list to send to Gemini, include drivers even if they lack recent location
+  const driversForAI = [];
   for (const d of candidates) {
-    let loc = await getLatestLocation(d.id);
+    const loc = await getLatestLocation(d.id);
     const workload = await getActiveTaskCount(d.id);
-    
-    // MOCK LOCATION FALLBACK (User Request for Testing)
-    if (!loc || !loc.latitude) {
-        loc = { 
-            latitude: 33.6844, 
-            longitude: 73.0479, 
-            recorded_at: new Date() 
-        };
-        console.log(`[DEBUG] ⚠️ No real location for Driver ${d.id}. Using MOCK location.`);
-    }
 
-    // TEMPORARILY DISABLED ONLINE CHECK AS PER USER REQUEST
-    // if (loc && loc.latitude && loc.longitude && isDriverOnline(loc.recorded_at)) {
-    if (loc && loc.latitude && loc.longitude) {
-       hydratedDrivers.push({
-         id: d.id,
-         name: `${d.first_name} ${d.last_name}`,
-         latitude: parseFloat(loc.latitude),
-         longitude: parseFloat(loc.longitude),
-         active_tasks: workload,
-         society_id: d.society_id
-       });
-    }
+    driversForAI.push({
+      id: d.id,
+      first_name: d.first_name,
+      last_name: d.last_name,
+      name: `${d.first_name || ''} ${d.last_name || ''}`.trim(),
+      latitude: loc && loc.latitude ? parseFloat(loc.latitude) : null,
+      longitude: loc && loc.longitude ? parseFloat(loc.longitude) : null,
+      recorded_at: loc ? loc.recorded_at : null,
+      active_tasks: workload,
+      society_id: d.society_id
+    });
   }
-
-  if (hydratedDrivers.length === 0) return null;
 
   const context = {
     bin: {
@@ -81,7 +68,7 @@ async function findBestDriverAI(societyId, binLat, binLon, fillLevel) {
       fill_level: fillLevel,
       society_id: societyId
     },
-    drivers: hydratedDrivers
+    drivers: driversForAI
   };
 
   console.log("Requesting AI for optimal driver...");
@@ -89,12 +76,21 @@ async function findBestDriverAI(societyId, binLat, binLon, fillLevel) {
   console.log("🤖 Gemini AI Response:", JSON.stringify(aiResult, null, 2));
   
   if (aiResult && aiResult.driver_id) {
-    // pick hydrated driver so we have lat/lng
-    const chosen = hydratedDrivers.find(h => h.id === aiResult.driver_id);
-    if (chosen) {
-      // attach name parts if available
-      const candidateMeta = candidates.find(c => c.id === chosen.id) || {};
-      return { driver: { id: chosen.id, first_name: candidateMeta.first_name, last_name: candidateMeta.last_name, latitude: chosen.latitude, longitude: chosen.longitude }, score: 0, reason: aiResult.reason, isAI: true };
+    // Find selected driver from the full candidate list (may lack live location)
+    const candidate = driversForAI.find(c => c.id == aiResult.driver_id) || null;
+    if (candidate) {
+      return {
+        driver: {
+          id: candidate.id,
+          first_name: candidate.first_name,
+          last_name: candidate.last_name,
+          latitude: candidate.latitude,
+          longitude: candidate.longitude
+        },
+        score: 0,
+        reason: aiResult.reason || null,
+        isAI: true
+      };
     }
   }
 
@@ -152,22 +148,18 @@ async function assignTask(taskId, assignedBy = null, wsService = null) {
   const binLat = task.latitude || 0;
   const binLon = task.longitude || 0;
 
+  // Always attempt assignment via Gemini AI first (no heuristic fallback)
   let best = null;
-
-  if (task.fill_level >= 90) {
-     try {
-       best = await findBestDriverAI(task.society_id, binLat, binLon, task.fill_level);
-     } catch (e) {
-       console.error("AI assignment failed, falling back to heuristic", e);
-     }
+  try {
+    best = await findBestDriverAI(task.society_id, binLat, binLon, task.fill_level);
+  } catch (e) {
+    console.error("AI assignment failed:", e);
   }
 
   if (!best) {
-    best = await findBestDriver(task.society_id, binLat, binLon);
-  }
-
-  if (!best) {
-    console.log(`❌ No suitable driver found for Task #${taskId}`);
+    console.log(`❌ Gemini did not return a suitable driver for Task #${taskId}. Marking task as 'created' for retry.`);
+    // Ensure task remains in 'created' status so retry logic can pick it up later
+    await pool.query(`UPDATE tasks SET status = 'created', updated_at = CURRENT_TIMESTAMP WHERE id = $1`, [taskId]);
     return null;
   }
 

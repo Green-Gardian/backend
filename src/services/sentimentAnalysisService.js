@@ -6,7 +6,7 @@ class SentimentAnalysisService {
         if (process.env.GEMINI_API_KEY) {
             this.genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
             this.model = this.genAI.getGenerativeModel({
-                model: "gemini-2.5-flash" 
+                model: "gemini-2.5-flash-lite"
             });
             console.log("Sentiment Analysis Service initialized with Gemini");
         } else {
