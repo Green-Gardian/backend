@@ -1,5 +1,5 @@
 const { pool } = require('../config/db');
-const geminiService = require('./geminiService');
+const groqService = require('./groqService');
 
 function haversineDistance(lat1, lon1, lat2, lon2) {
   const toRad = (deg) => (deg * Math.PI) / 180;
@@ -71,9 +71,9 @@ async function findBestDriverAI(societyId, binLat, binLon, fillLevel) {
     drivers: driversForAI
   };
 
-  console.log("Requesting AI for optimal driver...");
-  const aiResult = await geminiService.getOptimalDriver(context);
-  console.log("🤖 Gemini AI Response:", JSON.stringify(aiResult, null, 2));
+  console.log("Requesting AI (Groq) for optimal driver...");
+  const aiResult = await groqService.getOptimalDriver(context);
+  console.log("🤖 Groq AI Response:", JSON.stringify(aiResult, null, 2));
   
   if (aiResult && aiResult.driver_id) {
     // Find selected driver from the full candidate list (may lack live location)
@@ -148,7 +148,7 @@ async function assignTask(taskId, assignedBy = null, wsService = null) {
   const binLat = task.latitude || 0;
   const binLon = task.longitude || 0;
 
-  // Always attempt assignment via Gemini AI first (no heuristic fallback)
+  // Always attempt assignment via Groq AI first (no heuristic fallback)
   let best = null;
   try {
     best = await findBestDriverAI(task.society_id, binLat, binLon, task.fill_level);
@@ -157,7 +157,7 @@ async function assignTask(taskId, assignedBy = null, wsService = null) {
   }
 
   if (!best) {
-    console.log(`❌ Gemini did not return a suitable driver for Task #${taskId}. Marking task as 'created' for retry.`);
+    console.log(`❌ Groq did not return a suitable driver for Task #${taskId}. Marking task as 'created' for retry.`);
     // Ensure task remains in 'created' status so retry logic can pick it up later
     await pool.query(`UPDATE tasks SET status = 'created', updated_at = CURRENT_TIMESTAMP WHERE id = $1`, [taskId]);
     return null;
@@ -169,7 +169,7 @@ async function assignTask(taskId, assignedBy = null, wsService = null) {
   console.log(`🆔 Task ID: ${taskId}`);
   console.log(`🚛 Driver:  ${best.driver.first_name} ${best.driver.last_name} (ID: ${best.driver.id})`);
   console.log(`📍 Location: [${best.driver.latitude}, ${best.driver.longitude}]`);
-  console.log(`🤖 Method:  ${best.isAI ? 'Gemini AI' : 'Heuristic (Distance)'}`);
+  console.log(`🤖 Method:  ${best.isAI ? 'Groq AI' : 'Heuristic (Distance)'}`);
   console.log(`📝 Reason:  ${best.reason || 'Calculated Score'}`);
   console.log(`===============================================================\n`);
 
