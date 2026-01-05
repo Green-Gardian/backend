@@ -15,11 +15,13 @@ const createBin = async (bin) => {
     valid_sensors = 0,
     avg_distance = 'N/A',
     status = 'idle',
+    thingspeak_channel_id = null,
+    thingspeak_api_key = null,
   } = bin;
 
   const res = await pool.query(
-    `INSERT INTO bins (name, address, society, latitude, longitude, fill_level, temperature, humidity, smoke_level, distances, valid_sensors, avg_distance, status, created_at, updated_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, now(), now()) RETURNING *`,
+    `INSERT INTO bins (name, address, society, latitude, longitude, fill_level, temperature, humidity, smoke_level, distances, valid_sensors, avg_distance, status, thingspeak_channel_id, thingspeak_api_key, created_at, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, now(), now()) RETURNING *`,
     [
       name,
       address,
@@ -34,11 +36,14 @@ const createBin = async (bin) => {
       valid_sensors,
       avg_distance,
       status,
+      thingspeak_channel_id,
+      thingspeak_api_key,
     ]
   );
 
   return res.rows[0];
 };
+
 
 const getBins = async () => {
   const res = await pool.query(`SELECT * FROM bins ORDER BY id ASC`);

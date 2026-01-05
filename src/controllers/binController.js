@@ -2,6 +2,8 @@ const binModel = require('../models/bin');
 const websocketService = require('../services/websocketService');
 const { pool } = require('../config/db');
 const assignmentService = require('../services/assignmentService');
+const binIoTPoller = require('../services/binSimulator');
+const thingspeakService = require('../services/thingspeakService');
 
 const createBin = async (req, res) => {
   try {
@@ -50,18 +52,18 @@ const updateBin = async (req, res) => {
 
     // LOGGING: Save to bin_logs
     try {
-        const logQ = `INSERT INTO bin_logs (bin_id, fill_level, temperature, humidity, smoke_level, recorded_at) VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)`;
-        await pool.query(logQ, [bin.id, bin.fill_level, bin.temperature, bin.humidity, bin.smoke_level]);
+      const logQ = `INSERT INTO bin_logs (bin_id, fill_level, temperature, humidity, smoke_level, recorded_at) VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)`;
+      await pool.query(logQ, [bin.id, bin.fill_level, bin.temperature, bin.humidity, bin.smoke_level]);
     } catch (logErr) {
-        console.error("Failed to log bin update:", logErr);
+      console.error("Failed to log bin update:", logErr);
     }
 
     // AUTO-TASK CREATION & COMPLETION Logic
     try {
-        await assignmentService.checkAndCreateTask(bin, websocketService);
-        await assignmentService.checkAndCompleteTask(bin, websocketService);
+      await assignmentService.checkAndCreateTask(bin, websocketService);
+      await assignmentService.checkAndCompleteTask(bin, websocketService);
     } catch (taskErr) {
-        console.error("Error in auto-task logic:", taskErr);
+      console.error("Error in auto-task logic:", taskErr);
     }
 
     res.json({ success: true, data: bin });
@@ -86,11 +88,49 @@ const removeBin = async (req, res) => {
   }
 };
 
+const getIoTStatus = async (req, res) => {
+  try {
+    const statuses = await binIoTPoller.getIoTStatus();
+    res.json({ success: true, data: statuses });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+const pollIoTNow = async (req, res) => {
+  try {
+    await binIoTPoller.pollNow();
+    res.json({ success: true, message: 'IoT data poll triggered' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+const testThingSpeakConnection = async (req, res) => {
+  try {
+    const { channelId, apiKey } = req.body;
+
+    if (!channelId) {
+      return res.status(400).json({ success: false, message: 'channelId is required' });
+    }
+
+    const status = await thingspeakService.checkConnection(channelId, apiKey);
+    res.json({ success: true, data: status });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
 module.exports = {
   createBin,
   listBins,
   getBin,
   updateBin,
   removeBin,
+  getIoTStatus,
+  pollIoTNow,
+  testThingSpeakConnection,
 };
-
