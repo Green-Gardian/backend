@@ -15,7 +15,7 @@ class WebSocketService {
     initialize(server) {
         this.io = new Server(server, {
             cors: {
-                origin: process.env.FRONTEND_URL || "http://localhost:3000",
+                origin: "*", // Allow all origins for mobile development
                 methods: ["GET", "POST"]
             }
         });
@@ -91,7 +91,7 @@ class WebSocketService {
             const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
             socket.user = { id: decoded.id, username: decoded.username };
 
-            console.log("User connected:", socket.user.id);
+            console.log("User connected via JWT:", socket.user.id, socket.user.username);
         } catch (err) {
             console.error("Invalid token:", err.message);
             socket.disconnect();
@@ -164,10 +164,10 @@ class WebSocketService {
 
             // Leave previous society room if any
             socket.leaveAll();
-            
+
             // Join new society room
             socket.join(`society_${societyId}`);
-            
+
             // Rejoin user and role rooms
             socket.join(`user_${userInfo.userId}`);
             socket.join(`role_${userInfo.role}`);
@@ -247,7 +247,7 @@ class WebSocketService {
                 const userSockets = this.userSockets.get(userInfo.userId);
                 if (userSockets) {
                     userSockets.delete(socket.id);
-                    
+
                     // If no more sockets for this user, remove the entry
                     if (userSockets.size === 0) {
                         this.userSockets.delete(userInfo.userId);
@@ -483,16 +483,17 @@ class WebSocketService {
             const { chatId, userId } = data;
             console.log(`Joining room with chat id: ${chatId}`);
 
-            const rooms = Array.from(socket.rooms);
-            rooms.forEach((room) => {
-                if (room !== socket.id) {
-                    socket.leave(room);
-                    console.log(`User ${userId} left room ${room}`);
-                }
-            });
+            // Do NOT leave all other rooms. Users need to stay in society/role rooms.
+            // If we want to limit to one active chat room, we'd need to track which room is a "chat" room.
+            // For now, joining multiple chat rooms is fine, or the client can handle leaving.
+            // But definitely don't leave society_* or user_* rooms.
+
+            // Optional: Leave other rooms if they start with 'chat_' (if we named them that way, but we use UUIDs)
+            // Implementation: Just join.
 
             socket.join(chatId);
-            console.log(`User ${userId} joined room ${chatId}`);
+            socket.join(chatId);
+            console.log(`User ${userId} joined room ${chatId}. Socket rooms:`, socket.rooms);
         } catch (error) {
             console.error('Join room error:', error);
             socket.emit('error', { message: 'Failed to join room' });
@@ -504,6 +505,14 @@ class WebSocketService {
      */
     async handleMessage(socket, data) {
         try {
+            console.log("handleMessage called with:", data);
+
+            if (!socket.user) {
+                console.error("Socket has no user attached!");
+                socket.emit("messageSent", { success: false, error: "Unauthorized" });
+                return;
+            }
+
             const { chatId, content } = data;
             const senderId = socket.user.id;
             const sender_name = socket.user.username;
@@ -511,21 +520,26 @@ class WebSocketService {
             console.log("Sender ID from the user stored in the socket:", senderId);
             console.log("Sender name from the user stored in the socket:", sender_name);
 
-            await pool.query(
+            const result = await pool.query(
                 `INSERT INTO message (chat_id, content, sender_id, sender_name)
-                 VALUES ($1, $2, $3, $4)`,
+                 VALUES ($1, $2, $3, $4)
+                 RETURNING *`,
                 [chatId, content, senderId, sender_name]
             );
 
             await pool.query(`UPDATE chat SET lastmessage = $1 WHERE id = $2`, [content, chatId]);
 
-            const messageData = {
-                chatId,
-                content,
-                senderId,
-                sender_name,
-                created_at: new Date(),
-            };
+            // result.rows[0] contains id, created_at, etc.
+            const messageData = result.rows[0];
+
+            // Normalize fields for frontend if needed (camelCase vs snake_case)
+            // But frontend currently checks both sender_id and senderId. 
+            // The DB row has snake_case.
+            // Let's send the DB row directly, it's cleaner.
+
+            // Allow camelCase for compatibility/consistency if frontend expects it
+            messageData.chatId = chatId;
+            messageData.senderId = senderId;
 
             this.io.to(chatId).emit("receiveMessage", messageData);
             socket.emit("messageSent", { success: true, messageData });

@@ -1,4 +1,5 @@
 const { pool } = require("../config/db");
+const ChatService = require("../services/chatService");
 
 // Fetch chat history between two users in a society
 exports.getChatMessages = async (req, res) => {
@@ -36,7 +37,7 @@ exports.getChatGroup = async (req, res) => {
     );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({ message: "No chats found for this user." });
+      return res.status(200).json([]);
     }
 
     const chats = result.rows;
@@ -102,6 +103,30 @@ exports.removeUserFromChat = async (req, res) => {
     res.status(200).json({ message: "User removed from chat", chat: result.rows[0] });
   } catch (error) {
     console.error("Error removing user from chat:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+};
+// Initiate or Get Support Chat
+exports.initiateSupportChat = async (req, res) => {
+  const userId = req.user.id;
+  const societyId = req.user.society_id;
+
+  if (!societyId) {
+    return res.status(400).json({ error: "User is not associated with a society" });
+  }
+
+  try {
+    const adminId = await ChatService.findSocietyAdmin(societyId);
+    if (!adminId) {
+      return res.status(404).json({ error: "Society admin not found" });
+    }
+
+    // Pass the societyId, participant array, and title
+    const chat = await ChatService.createChat(societyId, [userId, adminId], "Customer Support");
+
+    res.json(chat);
+  } catch (err) {
+    console.error("Error initiating support chat:", err);
     res.status(500).json({ error: "Internal server error" });
   }
 };

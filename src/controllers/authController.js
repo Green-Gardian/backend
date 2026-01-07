@@ -225,30 +225,30 @@ const addAdminAndStaff = async (req, res) => {
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
       role === "super_admin"
         ? [
-            firstName.trim(),
-            lastName.trim(),
-            username,
-            phone,
-            String(email).trim(),
-            role,
-            mfaEnabled,
-            createdBy,
-          ]
+          firstName.trim(),
+          lastName.trim(),
+          username,
+          phone,
+          String(email).trim(),
+          role,
+          mfaEnabled,
+          createdBy,
+        ]
         : [
-            firstName.trim(),
-            lastName.trim(),
-            username,
-            phone,
-            String(email).trim(),
-            role,
-            finalSocietyId,
-            mfaEnabled,
-            createdBy,
-          ]
+          firstName.trim(),
+          lastName.trim(),
+          username,
+          phone,
+          String(email).trim(),
+          role,
+          finalSocietyId,
+          mfaEnabled,
+          createdBy,
+        ]
     );
     const newUser = userInsert.rows[0];
 
-    if(currentUser.role === "sub_admin"){
+    if (currentUser.role === "sub_admin") {
       await logSubAdminActivity({
         subAdmin: req.user.id,
         activityType: "CREATED_STAFF",
@@ -278,6 +278,21 @@ const addAdminAndStaff = async (req, res) => {
            VALUES ($1, $2, $3)`,
           [finalSocietyId, [newUser.id], null]
         );
+      }
+    }
+
+    // If role is driver, create Customer Support chat with Admin
+    if (role === "driver") {
+      try {
+        const ChatService = require("../services/chatService");
+        const adminId = await ChatService.findSocietyAdmin(finalSocietyId);
+        if (adminId) {
+          // Verify if driver is already in a support chat? No, just create it.
+          await ChatService.createChat(finalSocietyId, [newUser.id, adminId], "Customer Support");
+          console.log(`✅ Created Support Chat for Driver ${newUser.id} with Admin ${adminId}`);
+        }
+      } catch (err) {
+        console.error("Error creating driver support chat:", err);
       }
     }
 
@@ -311,7 +326,7 @@ const addAdminAndStaff = async (req, res) => {
     // If anything failed (including email), rollback so no partial user is left
     try {
       await client.query("ROLLBACK");
-    } catch (_) {}
+    } catch (_) { }
     console.error(`Error creating user: ${error.message}`);
     if (
       error.code === "EMAIL_SEND_FAILED" ||
@@ -417,7 +432,22 @@ const addResident = async (req, res) => {
     const newUser = insertUser.rows[0];
     console.log("✅ Created Resident:", newUser);
 
-    if(requesterData.role === "sub_admin"){
+    // Create Customer Support Chat with Society Admin
+    try {
+      const ChatService = require("../services/chatService");
+      const adminId = await ChatService.findSocietyAdmin(societyId);
+      if (adminId) {
+        await ChatService.createChat(societyId, [newUser.id, adminId], "Customer Support");
+        console.log(`✅ Created Support Chat for Resident ${newUser.id} with Admin ${adminId}`);
+      } else {
+        console.warn(`⚠️ No Admin found for Society ${societyId}. Chat not created.`);
+      }
+    } catch (chatError) {
+      console.error("❌ Error creating support chat:", chatError.message);
+      // Don't fail the registration if chat creation fails
+    }
+
+    if (requesterData.role === "sub_admin") {
       await logSubAdminActivity({
         subAdmin: req.user.id,
         activityType: "CREATED_RESIDENT",
@@ -471,8 +501,8 @@ const signIn = async (req, res) => {
         [user.society_id]
       );
       if (societyCheck.rows.length > 0 && societyCheck.rows[0].is_blocked) {
-        return res.status(403).json({ 
-          message: "Your society has been blocked. Please contact support." 
+        return res.status(403).json({
+          message: "Your society has been blocked. Please contact support."
         });
       }
     }
@@ -630,7 +660,7 @@ const signOut = async (req, res) => {
       refresh_token,
     ]);
 
-    if(req.user.role === "sub_admin"){
+    if (req.user.role === "sub_admin") {
       await logSubAdminActivity({
         subAdmin: req.user.id,
         activityType: "SIGNED_OUT",
@@ -923,8 +953,8 @@ const updateProfile = async (req, res) => {
     );
 
     console.log("Checkpoint 4");
-    
-    if(req.user.role === "sub_admin"){
+
+    if (req.user.role === "sub_admin") {
       await logSubAdminActivity({
         subAdmin: req.user.id,
         activityType: "UPDATED_PROFILE",
@@ -1606,7 +1636,7 @@ const updateUser = async (req, res) => {
       if (
         targetSocietyCheck.rows.length === 0 ||
         targetSocietyCheck.rows[0].society_id !==
-          adminSocietyCheck.rows[0].society_id
+        adminSocietyCheck.rows[0].society_id
       ) {
         return res
           .status(403)
@@ -1710,7 +1740,7 @@ const updateUser = async (req, res) => {
     const result = await runQuery(updateQuery, values);
 
 
-    if(req.user.role === "sub_admin"){
+    if (req.user.role === "sub_admin") {
       await logSubAdminActivity({
         subAdmin: req.user.id,
         activityType: "UPDATE_USER",
@@ -1799,7 +1829,7 @@ const blockUser = async (req, res) => {
       [isBlocked, userId]
     );
 
-    if(req.user.role === "sub_admin"){
+    if (req.user.role === "sub_admin") {
       await logSubAdminActivity({
         subAdmin: req.user.id,
         activityType: "BLOCK_USER",

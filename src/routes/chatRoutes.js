@@ -10,6 +10,7 @@ const {
   getChatGroup,
   addUserToChat,
   removeUserFromChat,
+  initiateSupportChat,
 } = require("../controllers/chatController");
 
 // Get messages between two users
@@ -33,5 +34,8 @@ router.post(
   verifyAdminOrSuperAdmin,
   removeUserFromChat
 );
+
+// Initiate or get support chat
+router.post("/support", verifyToken, initiateSupportChat);
 
 module.exports = router;
