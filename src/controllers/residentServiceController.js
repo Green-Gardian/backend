@@ -135,7 +135,7 @@ const getUserProfile = async (req, res) => {
     // LEFT JOIN to always prefer user row, profile may be missing
     const q = await run(
       `
-        SELECT up.*, u.first_name, u.last_name, u.email, u.phone_number 
+        SELECT up.*, u.first_name, u.last_name, u.email, u.phone_number, u.profile_picture
         FROM users u
         LEFT JOIN user_profiles up ON up.user_id = u.id
         WHERE u.id = $1
@@ -155,13 +155,21 @@ const getUserProfile = async (req, res) => {
 
 const updateUserProfile = async (req, res) => {
   const userId = req.user.id;
-  const { emergencyContactName, emergencyContactPhone, preferredCollectionTime } = req.body;
+  const { emergencyContactName, emergencyContactPhone, preferredCollectionTime, profilePicture } = req.body;
 
   try {
+    // We need to update both the users table (for profile_picture) and user_profiles
     const q = await run(
       `
+        WITH updated_user AS (
+          UPDATE users 
+          SET profile_picture = COALESCE($5, profile_picture),
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = $1
+          RETURNING id
+        )
         INSERT INTO user_profiles (user_id, emergency_contact_name, emergency_contact_phone, preferred_collection_time)
-        VALUES ($1, $2, $3, $4)
+        SELECT id, $2, $3, $4 FROM updated_user
         ON CONFLICT (user_id) 
         DO UPDATE SET 
           emergency_contact_name = EXCLUDED.emergency_contact_name,
@@ -170,11 +178,27 @@ const updateUserProfile = async (req, res) => {
           updated_at = CURRENT_TIMESTAMP
         RETURNING *
       `,
-      [userId, emergencyContactName, emergencyContactPhone, preferredCollectionTime]
+      [userId, emergencyContactName, emergencyContactPhone, preferredCollectionTime, profilePicture]
     );
+    
+    // Fetch updated user info to return complete object
+    const updatedProfile = await run(
+      `
+        SELECT up.*, u.first_name, u.last_name, u.email, u.phone_number, u.profile_picture
+        FROM users u
+        LEFT JOIN user_profiles up ON up.user_id = u.id
+        WHERE u.id = $1
+      `,
+      [userId]
+    );
+
     return res
       .status(200)
-      .json({ success: true, message: "Profile updated successfully", profile: q.rows[0] });
+      .json({ 
+        success: true, 
+        message: "Profile updated successfully", 
+        profile: updatedProfile.rows[0] 
+      });
   } catch (error) {
     return fail500(res, "Update user profile error", error);
   }
@@ -794,11 +818,72 @@ const sendMessage = async (req, res) => {
   }
 };
 
+const getDashboardStats = async (req, res) => {
+  const userId = req.user.id;
+
+  try {
+    // 1. Get request counts
+    const counts = await run(
+      `
+        SELECT 
+          COUNT(*) as total,
+          COUNT(*) FILTER (WHERE status IN ('pending', 'approved', 'assigned', 'in_progress')) as active,
+          COUNT(*) FILTER (WHERE status = 'completed') as completed
+        FROM service_requests
+        WHERE user_id = $1
+      `,
+      [userId]
+    );
+
+    // 2. Get user rating (average of overall_rating from feedback they've given)
+    const rating = await run(
+      `
+        SELECT AVG(overall_rating)::DECIMAL(2,1) as avg_rating
+        FROM service_feedback
+        WHERE user_id = $1
+      `,
+      [userId]
+    );
+
+    // 3. Get next upcoming collection
+    const upcoming = await run(
+      `
+        SELECT 
+          sr.id, sr.title, sr.status, sr.preferred_date, sr.scheduled_date, sr.preferred_time_slot,
+          sr.estimated_weight, sr.request_number,
+          st.name as service_type_name
+        FROM service_requests sr
+        LEFT JOIN service_types st ON sr.service_type_id = st.id
+        WHERE sr.user_id = $1 
+          AND sr.status IN ('approved', 'assigned', 'in_progress')
+          AND (sr.scheduled_date >= CURRENT_DATE OR sr.preferred_date >= CURRENT_DATE)
+        ORDER BY COALESCE(sr.scheduled_date, sr.preferred_date) ASC
+        LIMIT 1
+      `,
+      [userId]
+    );
+
+    return res.status(200).json({
+      success: true,
+      stats: {
+        totalRequests: parseInt(counts.rows[0].total) || 0,
+        activeRequests: parseInt(counts.rows[0].active) || 0,
+        completedRequests: parseInt(counts.rows[0].completed) || 0,
+        userRating: rating.rows[0].avg_rating || "5.0", // Default to 5.0 if no feedback yet
+      },
+      upcomingCollection: upcoming.rows[0] || null
+    });
+  } catch (error) {
+    return fail500(res, "Get dashboard stats error", error);
+  }
+};
+
 /* -------------------------------------------------------
  * Exports
  * ----------------------------------------------------- */
 
 module.exports = {
+  getDashboardStats,
   // Service Types
   getServiceTypes,
 

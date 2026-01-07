@@ -4,6 +4,7 @@ const router = express.Router();
 const {
     // Service Types
     getServiceTypes,
+    getDashboardStats,
     
     // Profile Management
     addUserProfile,
@@ -92,6 +93,7 @@ const verifyAdminOrResident = (req, res, next) => {
 
 // ===== SERVICE TYPES ROUTES =====
 router.get('/service-types', verifyAdminOrResident, getServiceTypes);
+router.get('/dashboard/stats', verifyAdminOrResident, getDashboardStats);
 
 // ===== USER PROFILE ROUTES =====
 router.post('/profile', verifyAdminOrResident, addUserProfile);
