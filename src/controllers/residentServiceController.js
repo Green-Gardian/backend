@@ -1,6 +1,8 @@
 // controllers/residentServiceController.js
 const { pool } = require("../config/db");
 const sentimentService = require("../services/sentimentAnalysisService");
+const assignmentService = require("../services/assignmentService");
+const websocketService = require("../services/websocketService");
 
 
 /** Parse positive int safely; returns fallback for invalid input. */
@@ -180,7 +182,7 @@ const updateUserProfile = async (req, res) => {
       `,
       [userId, emergencyContactName, emergencyContactPhone, preferredCollectionTime, profilePicture]
     );
-    
+
     // Fetch updated user info to return complete object
     const updatedProfile = await run(
       `
@@ -194,10 +196,10 @@ const updateUserProfile = async (req, res) => {
 
     return res
       .status(200)
-      .json({ 
-        success: true, 
-        message: "Profile updated successfully", 
-        profile: updatedProfile.rows[0] 
+      .json({
+        success: true,
+        message: "Profile updated successfully",
+        profile: updatedProfile.rows[0]
       });
   } catch (error) {
     return fail500(res, "Update user profile error", error);
@@ -421,9 +423,37 @@ const createServiceRequest = async (req, res) => {
       [q.rows[0].id, userId]
     );
 
+    // Auto-assign driver to this service request
+    const serviceRequestId = q.rows[0].id;
+    let assignment = null;
+    try {
+      assignment = await assignmentService.assignServiceRequest(serviceRequestId, websocketService);
+      if (assignment) {
+        console.log(`✅ Service Request #${serviceRequestId} auto-assigned to driver ${assignment.driver.id}`);
+        // Refresh the service request data to include driver info
+        const updatedRequest = await run(
+          `SELECT * FROM service_requests WHERE id = $1`,
+          [serviceRequestId]
+        );
+        return res.status(201).json({
+          success: true,
+          message: "Service request created and assigned successfully",
+          serviceRequest: updatedRequest.rows[0],
+          assignment: {
+            driver_id: assignment.driver.id,
+            driver_name: `${assignment.driver.first_name} ${assignment.driver.last_name}`,
+            method: assignment.method
+          }
+        });
+      }
+    } catch (assignErr) {
+      console.error(`⚠️ Auto-assignment failed for Service Request #${serviceRequestId}:`, assignErr);
+      // Continue without assignment - request stays in 'pending' for manual assignment
+    }
+
     return res.status(201).json({
       success: true,
-      message: "Service request created successfully",
+      message: "Service request created successfully (pending driver assignment)",
       serviceRequest: q.rows[0],
     });
   } catch (error) {

@@ -312,4 +312,117 @@ async function checkAndCompleteTask(bin, websocketService) {
   return false;
 }
 
-module.exports = { findBestDriver, assignTask, checkAndCreateTask, checkAndCompleteTask };
+/**
+ * Assign a driver to a service request based on preferred date and time slot
+ * @param {number} serviceRequestId - The service request ID
+ * @param {object} websocketService - WebSocket service for notifications (optional)
+ * @returns {object|null} Assignment result or null if no driver available
+ */
+async function assignServiceRequest(serviceRequestId, websocketService = null) {
+  // Fetch service request details
+  const srQ = `
+    SELECT sr.id, sr.user_id, sr.title, sr.preferred_date, sr.preferred_time_slot, sr.status,
+           ua.latitude, ua.longitude, u.society_id
+    FROM service_requests sr
+    LEFT JOIN user_addresses ua ON sr.address_id = ua.id
+    LEFT JOIN users u ON sr.user_id = u.id
+    WHERE sr.id = $1
+  `;
+  const srRes = await pool.query(srQ, [serviceRequestId]);
+
+  if (!srRes.rows[0]) {
+    console.log(`❌ Service Request #${serviceRequestId} not found.`);
+    return null;
+  }
+
+  const request = srRes.rows[0];
+
+  // Only assign if status is 'pending' or 'approved'
+  if (!['pending', 'approved'].includes(request.status)) {
+    console.log(`⚠️ Service Request #${serviceRequestId} already in status: ${request.status}. Skipping assignment.`);
+    return null;
+  }
+
+  const societyId = request.society_id;
+  const pickupLat = request.latitude || 33.6844; // Default to Islamabad if no address
+  const pickupLon = request.longitude || 73.0479;
+
+  if (!societyId) {
+    console.log(`❌ No society found for Service Request #${serviceRequestId}. Cannot assign driver.`);
+    return null;
+  }
+
+  // Try AI-based assignment first
+  let best = null;
+  try {
+    best = await findBestDriverAI(societyId, pickupLat, pickupLon, 50); // Use 50 as default "fill level" for priority
+  } catch (e) {
+    console.error("AI assignment for service request failed:", e);
+  }
+
+  // Fallback to heuristic assignment
+  if (!best) {
+    try {
+      best = await findBestDriver(societyId, pickupLat, pickupLon);
+    } catch (e) {
+      console.error("Heuristic assignment for service request failed:", e);
+    }
+  }
+
+  if (!best || !best.driver) {
+    console.log(`❌ No available driver found for Service Request #${serviceRequestId}. Status remains 'pending'.`);
+    return null;
+  }
+
+  console.log(`\n===============================================================`);
+  console.log(`✅ SERVICE REQUEST ASSIGNED SUCCESSFULLY`);
+  console.log(`===============================================================`);
+  console.log(`🆔 Service Request ID: ${serviceRequestId}`);
+  console.log(`📋 Title: ${request.title}`);
+  console.log(`📅 Preferred Date: ${request.preferred_date}`);
+  console.log(`⏰ Time Slot: ${request.preferred_time_slot || 'Not specified'}`);
+  console.log(`🚛 Driver: ${best.driver.first_name} ${best.driver.last_name} (ID: ${best.driver.id})`);
+  console.log(`🤖 Method: ${best.isAI ? 'Groq AI' : 'Heuristic (Distance)'}`);
+  console.log(`📝 Reason: ${best.reason || 'Calculated Score'}`);
+  console.log(`===============================================================\n`);
+
+  // Update service request with driver assignment
+  const updateQ = `
+    UPDATE service_requests 
+    SET driver_id = $1, status = 'assigned', scheduled_date = preferred_date, updated_at = CURRENT_TIMESTAMP
+    WHERE id = $2
+    RETURNING *
+  `;
+  const updateRes = await pool.query(updateQ, [best.driver.id, serviceRequestId]);
+
+  // Log status change in history
+  const historyQ = `
+    INSERT INTO service_request_status_history 
+      (service_request_id, old_status, new_status, changed_by, notes)
+    VALUES ($1, $2, 'assigned', $3, $4)
+  `;
+  await pool.query(historyQ, [
+    serviceRequestId,
+    request.status,
+    best.driver.id,
+    `Auto-assigned to driver ${best.driver.first_name} ${best.driver.last_name} via ${best.isAI ? 'AI optimization' : 'heuristic algorithm'}`
+  ]);
+
+  // Send WebSocket notification to driver
+  if (websocketService && websocketService.sendServiceRequestToDriver) {
+    websocketService.sendServiceRequestToDriver(best.driver.id, {
+      id: serviceRequestId,
+      title: request.title,
+      preferred_date: request.preferred_date,
+      preferred_time_slot: request.preferred_time_slot
+    });
+  }
+
+  return {
+    serviceRequest: updateRes.rows[0],
+    driver: best.driver,
+    method: best.isAI ? 'AI_OPTIMIZED' : 'HEURISTIC'
+  };
+}
+
+module.exports = { findBestDriver, assignTask, checkAndCreateTask, checkAndCompleteTask, assignServiceRequest };

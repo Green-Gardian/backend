@@ -442,15 +442,80 @@ const updateTaskStatus = async (req, res) => {
     const taskId = toInt(req.params.taskId, null);
     if (taskId === null) return res.status(400).json({ message: "taskId is required" });
 
-    const { status, notes, completedAt, location } = req.body;
+    const { status, notes, completedAt, location, taskType } = req.body;
 
-    // Ensure the driver-task exists and belongs to this driver
+    // First, check if this is a bin-based task
     const dtQ = `SELECT * FROM driver_tasks WHERE task_id = $1 AND driver_id = $2 LIMIT 1`;
     const dtRes = await pool.query(dtQ, [taskId, req.user.id]);
+
+    // If not found in driver_tasks, check if it's a service request
     if (dtRes.rowCount === 0) {
-      return res.status(404).json({ message: "Task not found for this driver" });
+      // Check service_requests table
+      const srQ = `SELECT * FROM service_requests WHERE id = $1 AND driver_id = $2 LIMIT 1`;
+      const srRes = await pool.query(srQ, [taskId, req.user.id]);
+
+      if (srRes.rowCount === 0) {
+        return res.status(404).json({ message: "Task not found for this driver" });
+      }
+
+      // Handle service request status update
+      const serviceRequest = srRes.rows[0];
+      const now = new Date().toISOString();
+
+      // Map status values for service requests
+      const validStatuses = ['assigned', 'accepted', 'in_progress', 'completed', 'cancelled'];
+      if (status && !validStatuses.includes(status)) {
+        return res.status(400).json({ message: `Invalid status. Valid values: ${validStatuses.join(', ')}` });
+      }
+
+      const updateFields = [];
+      const updateVals = [];
+      let idx = 1;
+
+      if (status) {
+        updateFields.push(`status = $${idx++}`);
+        updateVals.push(status);
+      }
+      if (status === 'completed') {
+        updateFields.push(`completed_at = $${idx++}`);
+        updateVals.push(completedAt || now);
+      }
+      if (notes) {
+        updateFields.push(`completion_notes = $${idx++}`);
+        updateVals.push(typeof notes === 'string' ? notes : JSON.stringify(notes));
+      }
+
+      if (updateFields.length === 0) {
+        return res.status(400).json({ message: "No valid fields to update" });
+      }
+
+      const updateQ = `
+        UPDATE service_requests 
+        SET ${updateFields.join(', ')}, updated_at = CURRENT_TIMESTAMP
+        WHERE id = $${idx} AND driver_id = $${idx + 1}
+        RETURNING *
+      `;
+      updateVals.push(taskId, req.user.id);
+      const updateRes = await pool.query(updateQ, updateVals);
+
+      // Log status change in history
+      await pool.query(
+        `INSERT INTO service_request_status_history 
+          (service_request_id, old_status, new_status, changed_by, notes)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [taskId, serviceRequest.status, status, req.user.id, notes ? (typeof notes === 'string' ? notes : JSON.stringify(notes)) : null]
+      );
+
+      console.log(`✅ Service Request #${taskId} status updated to '${status}' by driver ${req.user.id}`);
+
+      return res.status(200).json({
+        message: "Service request status updated successfully",
+        task: updateRes.rows[0],
+        taskType: 'service_request'
+      });
     }
 
+    // Handle bin-based task status update (existing logic)
     const now = new Date().toISOString();
     const updates = [];
     const vals = [];
@@ -524,7 +589,7 @@ const updateTaskStatus = async (req, res) => {
         });
       }
 
-      return res.status(200).json({ message: "Task status updated successfully", task: updatedTask });
+      return res.status(200).json({ message: "Task status updated successfully", task: updatedTask, taskType: 'bin_task' });
     }
 
     return res.status(400).json({ message: "No valid fields to update" });
@@ -768,8 +833,8 @@ const getCurrentTasks = async (req, res) => {
       console.log('Error logging getCurrentTasks debug info', e);
     }
 
-    // Query real tasks assigned to this driver
-    const q = `
+    // Query real tasks assigned to this driver (bin-based tasks)
+    const binTasksQ = `
       SELECT
         dt.id as driver_task_id,
         dt.task_id,
@@ -796,13 +861,15 @@ const getCurrentTasks = async (req, res) => {
       ORDER BY dt.assigned_at DESC
     `;
 
-    const result = await pool.query(q, [req.user.id]);
+    const binTasksResult = await pool.query(binTasksQ, [req.user.id]);
 
-    const currentTasks = result.rows.map((r) => ({
+    const binTasks = binTasksResult.rows.map((r) => ({
       id: r.id,
       driver_task_id: r.driver_task_id,
+      task_type: 'bin_collection',
+      source: 'bin_task',
       bin_id: r.bin_name || `BIN_${r.bin_id}`,
-      task_type: (r.task_notes && r.task_notes.type) || 'collection',
+      title: r.bin_name ? `Collect: ${r.bin_name}` : 'Bin Collection',
       priority: r.priority || 'normal',
       status: r.driver_task_status || r.task_status || 'assigned',
       location: {
@@ -815,12 +882,111 @@ const getCurrentTasks = async (req, res) => {
       assigned_at: r.assigned_at,
       accepted_at: r.accepted_at,
       completed_at: r.completed_at,
+      preferred_date: null,
+      preferred_time_slot: null,
     }));
+
+    // Query service requests assigned to this driver
+    const serviceRequestsQ = `
+      SELECT
+        sr.id,
+        sr.request_number,
+        sr.title,
+        sr.description,
+        sr.status,
+        sr.priority,
+        sr.preferred_date,
+        sr.preferred_time_slot,
+        sr.scheduled_date,
+        sr.special_instructions,
+        sr.estimated_weight,
+        sr.estimated_bags,
+        sr.created_at,
+        sr.updated_at,
+        st.name as service_type_name,
+        st.category as service_category,
+        ua.street_address,
+        ua.apartment_unit,
+        ua.area,
+        ua.city,
+        ua.latitude,
+        ua.longitude,
+        ua.landmark,
+        u.first_name as resident_first_name,
+        u.last_name as resident_last_name,
+        u.phone_number as resident_phone
+      FROM service_requests sr
+      LEFT JOIN service_types st ON sr.service_type_id = st.id
+      LEFT JOIN user_addresses ua ON sr.address_id = ua.id
+      LEFT JOIN users u ON sr.user_id = u.id
+      WHERE sr.driver_id = $1
+        AND sr.status IN ('assigned', 'approved', 'in_progress')
+      ORDER BY sr.preferred_date ASC, sr.created_at DESC
+    `;
+
+    const serviceRequestsResult = await pool.query(serviceRequestsQ, [req.user.id]);
+
+    const serviceRequests = serviceRequestsResult.rows.map((r) => ({
+      id: r.id,
+      driver_task_id: null, // Not a bin task
+      task_type: 'service_request',
+      source: 'service_request',
+      request_number: r.request_number,
+      title: r.title || r.service_type_name || 'Service Request',
+      description: r.description,
+      service_type: r.service_type_name,
+      service_category: r.service_category,
+      priority: r.priority || 'normal',
+      status: r.status,
+      location: {
+        lat: r.latitude ? parseFloat(r.latitude) : null,
+        lng: r.longitude ? parseFloat(r.longitude) : null,
+        address: [r.street_address, r.apartment_unit, r.area, r.city].filter(Boolean).join(', ') || null,
+        landmark: r.landmark,
+      },
+      estimated_time: null,
+      fill_level: null,
+      estimated_weight: r.estimated_weight,
+      estimated_bags: r.estimated_bags,
+      special_instructions: r.special_instructions,
+      preferred_date: r.preferred_date,
+      preferred_time_slot: r.preferred_time_slot,
+      scheduled_date: r.scheduled_date,
+      resident: {
+        name: `${r.resident_first_name || ''} ${r.resident_last_name || ''}`.trim(),
+        phone: r.resident_phone,
+      },
+      assigned_at: r.updated_at, // Use updated_at as assignment time
+      accepted_at: null,
+      completed_at: null,
+      created_at: r.created_at,
+    }));
+
+    // Combine both types of tasks
+    const allTasks = [...binTasks, ...serviceRequests];
+
+    // Sort by priority (urgent > high > normal > low) and then by date
+    const priorityOrder = { urgent: 0, high: 1, normal: 2, low: 3 };
+    allTasks.sort((a, b) => {
+      const pa = priorityOrder[a.priority] ?? 2;
+      const pb = priorityOrder[b.priority] ?? 2;
+      if (pa !== pb) return pa - pb;
+      // Sort by preferred_date or assigned_at
+      const dateA = a.preferred_date || a.assigned_at;
+      const dateB = b.preferred_date || b.assigned_at;
+      return new Date(dateA) - new Date(dateB);
+    });
+
+    console.log(`[getCurrentTasks] Driver ${req.user.id}: ${binTasks.length} bin tasks, ${serviceRequests.length} service requests`);
 
     return res.status(200).json({
       message: "Current tasks retrieved successfully",
-      tasks: currentTasks,
-      count: currentTasks.length,
+      tasks: allTasks,
+      count: allTasks.length,
+      breakdown: {
+        bin_tasks: binTasks.length,
+        service_requests: serviceRequests.length,
+      }
     });
   } catch (error) {
     const status = error.status || 500;
