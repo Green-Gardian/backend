@@ -45,7 +45,7 @@ router.post(
   addAdminAndStaff
 );
 
-router.post("/refresh-token", verifyToken, refreshToken);
+router.post("/refresh-token", refreshToken);
 router.post("/verify-email", verifyEmailAndSetPassword);
 router.post("/change-password", verifyToken, verifyMFASetup, changePassword);
 router.post("/forgot-password", forgotPassword);
