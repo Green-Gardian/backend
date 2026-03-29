@@ -3,6 +3,7 @@ const { pool } = require("../config/db");
 const sentimentService = require("../services/sentimentAnalysisService");
 const assignmentService = require("../services/assignmentService");
 const websocketService = require("../services/websocketService");
+const { ensureCurrentDueRecord, getMonthlyDuesAmount } = require("../services/duesService");
 
 
 /** Parse positive int safely; returns fallback for invalid input. */
@@ -387,9 +388,27 @@ const createServiceRequest = async (req, res) => {
     });
   }
 
-  const request_number = genRequestNumber();
-
   try {
+    const dueState = await ensureCurrentDueRecord(pool, userId, req.user.society_id, new Date());
+    if (!dueState.canRequestSpecialCollection) {
+      return res.status(403).json({
+        success: false,
+        message: dueState.blockReason,
+        dueStatus: {
+          id: dueState.due.id,
+          billingMonth: dueState.due.billing_month,
+          dueDate: dueState.due.due_date,
+          amount: dueState.due.amount_cents / 100,
+          currency: dueState.due.currency,
+          status: dueState.due.status,
+          monthlyAmount: getMonthlyDuesAmount(),
+          canRequestSpecialCollection: dueState.canRequestSpecialCollection,
+        },
+      });
+    }
+
+    const request_number = genRequestNumber();
+
     const q = await run(
       `
         INSERT INTO service_requests 

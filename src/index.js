@@ -29,10 +29,15 @@ const systemFeedbackRouter = require("./routes/systemFeedbackRoutes");
 const sentimentAnalyticsRouter = require("./routes/sentimentAnalyticsRoutes");
 const binRouter = require("./routes/binRoutes");
 const binSimulator = require("./services/binSimulator");
+const webhookRouter = require("./routes/webhookRoutes");
+const duesSchedulerService = require("./services/duesSchedulerService");
 
 const PORT = process.env.PORT || 3001;
 const app = express();
 const server = http.createServer(app);
+
+// Stripe webhook must receive raw body for signature verification.
+app.use("/webhooks", express.raw({ type: "application/json" }), webhookRouter);
 
 // Initialize unified WebSocket service (handles both alerts and chat)
 websocketService.initialize(server);
@@ -101,5 +106,11 @@ server.listen(PORT, () => {
     binSimulator.start();
   } catch (err) {
     console.error('Failed to start bin simulator', err);
+  }
+
+  try {
+    duesSchedulerService.start();
+  } catch (err) {
+    console.error("Failed to start dues scheduler", err);
   }
 });

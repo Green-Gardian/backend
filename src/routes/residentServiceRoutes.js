@@ -32,6 +32,16 @@ const {
     sendMessage
 } = require('../controllers/residentServiceController');
 
+const {
+    getMyDueStatus,
+    getMyDueHistory,
+    createDueCheckoutSession,
+    verifyDueCheckoutSession,
+    getAdminOverview,
+    getAdminRecords,
+    getResidentHistoryForAdmin,
+} = require('../controllers/duesController');
+
 // Middleware to verify if user is a Admin
 const verifyAdmin = (req, res, next) => {
     if (!req.user) {
@@ -41,7 +51,7 @@ const verifyAdmin = (req, res, next) => {
         });
     }
     
-    if (req.user.role !== 'admin' || req.user.role !== 'sub_admin') {
+    if (!['admin', 'sub_admin', 'super_admin'].includes(req.user.role)) {
         return res.status(403).json({ 
             success: false, 
             message: 'Access denied. Admin role required.' 
@@ -94,6 +104,17 @@ const verifyAdminOrResident = (req, res, next) => {
 // ===== SERVICE TYPES ROUTES =====
 router.get('/service-types', verifyAdminOrResident, getServiceTypes);
 router.get('/dashboard/stats', verifyAdminOrResident, getDashboardStats);
+
+// ===== MONTHLY DUES ROUTES (RESIDENT) =====
+router.get('/dues/status', verifyResident, getMyDueStatus);
+router.get('/dues/history', verifyResident, getMyDueHistory);
+router.post('/dues/checkout-session', verifyResident, createDueCheckoutSession);
+router.post('/dues/verify-session', verifyResident, verifyDueCheckoutSession);
+
+// ===== MONTHLY DUES ROUTES (ADMIN) =====
+router.get('/admin/dues/overview', verifyAdmin, getAdminOverview);
+router.get('/admin/dues/records', verifyAdmin, getAdminRecords);
+router.get('/admin/dues/resident/:residentId/history', verifyAdmin, getResidentHistoryForAdmin);
 
 // ===== USER PROFILE ROUTES =====
 router.post('/profile', verifyAdminOrResident, addUserProfile);
