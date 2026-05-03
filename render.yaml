@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: greenguardian-backend
+    env: node
+    buildCommand: npm install
+    startCommand: npm run migrate && npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: greenguardian-db
+          property: connectionString
+    healthCheckPath: /health
+
+databases:
+  - name: greenguardian-db
+    databaseName: greenguardian
+    user: greenguardian
