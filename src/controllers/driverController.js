@@ -83,7 +83,9 @@ const sendVerificationEmail = async (recipientUsername, recipientEmail, verifica
   const verificationLink = `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}`;
 
   const transporter = nodemailer.createTransport({
-    service: "gmail",
+    host: "smtp.gmail.com",
+    port: 587,
+    secure: false,
     auth: {
       user: process.env.SENDER_EMAIL,
       pass: process.env.SENDER_PASSWORD,

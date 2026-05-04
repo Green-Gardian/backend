@@ -7,11 +7,13 @@ class NotificationService {
     constructor() {
         // Initialize email transporter
         this.emailTransporter = nodemailer.createTransport({
-            service: 'gmail',
+            host: "smtp.gmail.com",
+            port: 587,
+            secure: false,
             auth: {
-                user: process.env.SENDER_EMAIL,
-                pass: process.env.SENDER_PASSWORD
-            }
+              user: process.env.SENDER_EMAIL,
+              pass: process.env.SENDER_PASSWORD,
+            },
         });
 
         // Initialize Vonage client for SMS
