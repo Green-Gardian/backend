@@ -1,20 +1,14 @@
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 const { Vonage } = require('@vonage/server-sdk');
 const { pool } = require('../config/db');
 require('dotenv').config();
 
 class NotificationService {
     constructor() {
-        // Initialize email transporter
-        this.emailTransporter = nodemailer.createTransport({
-            host: "smtp.gmail.com",
-            port: 587,
-            secure: false,
-            auth: {
-              user: process.env.SENDER_EMAIL,
-              pass: process.env.SENDER_PASSWORD,
-            },
-        });
+        // Initialize Resend for email
+        if (process.env.RESEND_API_KEY) {
+            this.resend = new Resend(process.env.RESEND_API_KEY);
+        }
 
         // Initialize Vonage client for SMS
         if (process.env.VONAGE_API_KEY && process.env.VONAGE_API_SECRET) {
@@ -24,8 +18,8 @@ class NotificationService {
             });
         }
 
-        // Default from email
-        this.fromEmail = process.env.SENDER_EMAIL || 'noreply@greenguardian.com';
+        // Default from email - use verified domain or Resend's default
+        this.fromEmail = process.env.SENDER_EMAIL || 'onboarding@resend.dev';
     }
 
     /**
@@ -33,23 +27,25 @@ class NotificationService {
      */
     async sendEmail(to, subject, body, alertId = null, userId = null) {
         try {
-            const mailOptions = {
+            if (!this.resend) {
+                throw new Error('Resend not configured. Please set RESEND_API_KEY environment variable.');
+            }
+
+            const result = await this.resend.emails.send({
                 from: this.fromEmail,
                 to: to,
                 subject: subject,
                 html: body
-            };
-
-            const result = await this.emailTransporter.sendMail(mailOptions);
+            });
             
             // Log successful email
             if (alertId && userId) {
-                await this.logCommunication(alertId, userId, 'email', 'success', result.messageId);
+                await this.logCommunication(alertId, userId, 'email', 'success', result.id);
             }
 
             return {
                 success: true,
-                messageId: result.messageId,
+                messageId: result.id,
                 message: 'Email sent successfully'
             };
         } catch (error) {
@@ -373,24 +369,23 @@ class NotificationService {
             push: false
         };
 
-        // Test email
+        // Test email (Resend)
         try {
-            if (this.emailTransporter) {
-                await this.emailTransporter.verify();
+            if (this.resend) {
                 results.email = true;
             }
         } catch (error) {
             console.error('Email configuration test failed:', error);
         }
 
-                            // Test SMS
-                    try {
-                        if (this.vonageClient) {
-                            results.sms = true;
-                        }
-                    } catch (error) {
-                        console.error('SMS configuration test failed:', error);
-                    }
+        // Test SMS
+        try {
+            if (this.vonageClient) {
+                results.sms = true;
+            }
+        } catch (error) {
+            console.error('SMS configuration test failed:', error);
+        }
 
         // Push notifications are always available (web-based)
         results.push = true;

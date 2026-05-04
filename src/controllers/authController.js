@@ -3,7 +3,7 @@
 const { pool } = require("../config/db");
 require("dotenv").config();
 const crypto = require("crypto");
-const nodemailer = require("nodemailer");
+const emailService = require("../utils/emailService");
 const jwt = require("jsonwebtoken");
 const speakeasy = require("speakeasy");
 const QRCode = require("qrcode");
@@ -678,32 +678,15 @@ const sendVerificationEmail = async (
   recipientEmail,
   verificationToken
 ) => {
-  const verificationLink = `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}`;
-
   try {
-    if (!process.env.SENDER_EMAIL || !process.env.SENDER_PASSWORD) {
-      const err = new Error("Email credentials missing");
-      err.code = "EMAIL_CONFIG_MISSING";
-      throw err;
-    }
-
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: process.env.SENDER_EMAIL,
-        pass: process.env.SENDER_PASSWORD,
-      },
-    });
-
-    await transporter.sendMail({
-      from: `Green Guardian <${process.env.SENDER_EMAIL}>`,
-      to: recipientEmail,
-      subject: "🌱 Welcome to Green Guardian - Verify Your Email",
-      html: verificationEmailHTML(recipientUsername, verificationLink),
-    });
+    await emailService.sendVerificationEmail(
+      recipientUsername,
+      recipientEmail,
+      verificationToken,
+      verificationEmailHTML
+    );
   } catch (error) {
     console.error("Error sending email:", error);
-    if (!error.code) error.code = "EMAIL_SEND_FAILED";
     throw error;
   }
 };
@@ -1167,32 +1150,15 @@ const sendPasswordResetEmail = async (
   recipientEmail,
   resetToken
 ) => {
-  const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
-
   try {
-    if (!process.env.SENDER_EMAIL || !process.env.SENDER_PASSWORD) {
-      const err = new Error("Email credentials missing");
-      err.code = "EMAIL_CONFIG_MISSING";
-      throw err;
-    }
-
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: process.env.SENDER_EMAIL,
-        pass: process.env.SENDER_PASSWORD,
-      },
-    });
-
-    await transporter.sendMail({
-      from: `Green Guardian <${process.env.SENDER_EMAIL}>`,
-      to: recipientEmail,
-      subject: "🔐 Green Guardian - Password Reset Request",
-      html: resetEmailHTML(recipientUsername, resetLink),
-    });
+    await emailService.sendPasswordResetEmail(
+      recipientUsername,
+      recipientEmail,
+      resetToken,
+      resetEmailHTML
+    );
   } catch (error) {
     console.error("Error sending password reset email:", error);
-    if (!error.code) error.code = "EMAIL_SEND_FAILED";
     throw error;
   }
 };
@@ -1206,7 +1172,9 @@ const sendPasswordResetOTPEmail = async (
 
   try {
     const transporter = nodemailer.createTransport({
-      service: "gmail",
+      host: "smtp.gmail.com",
+      port: 587,
+      secure: false,
       auth: {
         user: process.env.SENDER_EMAIL,
         pass: process.env.SENDER_PASSWORD,
