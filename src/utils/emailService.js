@@ -1,16 +1,15 @@
-const brevo = require('@getbrevo/brevo');
+const SibApiV3Sdk = require('sib-api-v3-sdk');
 require('dotenv').config();
 
 class EmailService {
     constructor() {
         if (process.env.BREVO_API_KEY) {
             try {
-                // Initialize Brevo API client
-                const apiInstance = new brevo.TransactionalEmailsApi();
-                const apiKey = apiInstance.authentications['api-key'];
+                const defaultClient = SibApiV3Sdk.ApiClient.instance;
+                const apiKey = defaultClient.authentications['api-key'];
                 apiKey.apiKey = process.env.BREVO_API_KEY;
 
-                this.emailApi = apiInstance;
+                this.emailApi = new SibApiV3Sdk.TransactionalEmailsApi();
                 this.fromEmail = process.env.SENDER_EMAIL || 'no-reply@greenguardian.qzz.io';
                 this.fromName = 'Green Guardian';
                 console.log('✅ Brevo email service initialized');
@@ -19,13 +18,10 @@ class EmailService {
                 this.emailApi = null;
             }
         } else {
-            console.warn('⚠️  BREVO_API_KEY not configured. Email functionality will be disabled.');
+            console.warn('⚠️ BREVO_API_KEY not configured.');
         }
     }
 
-    /**
-     * Send email using Brevo
-     */
     async sendEmail({ to, subject, html }) {
         try {
             if (!this.emailApi) {
@@ -34,14 +30,14 @@ class EmailService {
                 throw err;
             }
 
-            const result = await this.emailApi.sendTransacEmail({
-                sender: { email: this.fromEmail, name: this.fromName },
-                to: [{ email: to }],
-                subject: subject,
-                htmlContent: html
-            });
+            const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
+            sendSmtpEmail.sender = { email: this.fromEmail, name: this.fromName };
+            sendSmtpEmail.to = [{ email: to }];
+            sendSmtpEmail.subject = subject;
+            sendSmtpEmail.htmlContent = html;
 
-            console.log(`✅ Email sent successfully to ${to}. Message ID: ${result.messageId}`);
+            const result = await this.emailApi.sendTransacEmail(sendSmtpEmail);
+            console.log(`✅ Email sent successfully to ${to}`);
             return result;
         } catch (error) {
             console.error('❌ Error sending email:', error);
@@ -50,12 +46,8 @@ class EmailService {
         }
     }
 
-    /**
-     * Send verification email
-     */
     async sendVerificationEmail(recipientUsername, recipientEmail, verificationToken, verificationEmailHTML) {
         const verificationLink = `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}`;
-
         return await this.sendEmail({
             to: recipientEmail,
             subject: '🌱 Welcome to Green Guardian - Verify Your Email',
@@ -63,12 +55,8 @@ class EmailService {
         });
     }
 
-    /**
-     * Send password reset email
-     */
     async sendPasswordResetEmail(recipientUsername, recipientEmail, resetToken, resetEmailHTML) {
         const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
-
         return await this.sendEmail({
             to: recipientEmail,
             subject: '🔐 Green Guardian - Password Reset Request',
