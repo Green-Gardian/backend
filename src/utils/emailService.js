@@ -1,35 +1,38 @@
-const { Resend } = require('resend');
+const brevo = require('@getbrevo/brevo');
 require('dotenv').config();
 
 class EmailService {
     constructor() {
-        if (process.env.RESEND_API_KEY) {
-            this.resend = new Resend(process.env.RESEND_API_KEY);
-            this.fromEmail = process.env.SENDER_EMAIL || 'onboarding@resend.dev';
+        if (process.env.BREVO_API_KEY) {
+            const client = brevo.ApiClient.instance;
+            client.authentications['api-key'].apiKey = process.env.BREVO_API_KEY;
+            this.emailApi = new brevo.TransactionalEmailsApi();
+            this.fromEmail = process.env.SENDER_EMAIL || 'no-reply@greenguardian.qzz.io';
+            this.fromName = 'Green Guardian';
         } else {
-            console.warn('⚠️  RESEND_API_KEY not configured. Email functionality will be disabled.');
+            console.warn('⚠️  BREVO_API_KEY not configured. Email functionality will be disabled.');
         }
     }
 
     /**
-     * Send email using Resend
+     * Send email using Brevo
      */
     async sendEmail({ to, subject, html }) {
         try {
-            if (!this.resend) {
-                const err = new Error('Resend not configured. Please set RESEND_API_KEY environment variable.');
+            if (!this.emailApi) {
+                const err = new Error('Brevo not configured. Please set BREVO_API_KEY environment variable.');
                 err.code = 'EMAIL_CONFIG_MISSING';
                 throw err;
             }
 
-            const result = await this.resend.emails.send({
-                from: this.fromEmail,
-                to: to,
+            const result = await this.emailApi.sendTransacEmail({
+                sender: { email: this.fromEmail, name: this.fromName },
+                to: [{ email: to }],
                 subject: subject,
-                html: html
+                htmlContent: html
             });
 
-            console.log(`✅ Email sent successfully to ${to}. Message ID: ${result.id}`);
+            console.log(`✅ Email sent successfully to ${to}. Message ID: ${result.messageId}`);
             return result;
         } catch (error) {
             console.error('❌ Error sending email:', error);
@@ -43,7 +46,7 @@ class EmailService {
      */
     async sendVerificationEmail(recipientUsername, recipientEmail, verificationToken, verificationEmailHTML) {
         const verificationLink = `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}`;
-        
+
         return await this.sendEmail({
             to: recipientEmail,
             subject: '🌱 Welcome to Green Guardian - Verify Your Email',
@@ -56,7 +59,7 @@ class EmailService {
      */
     async sendPasswordResetEmail(recipientUsername, recipientEmail, resetToken, resetEmailHTML) {
         const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
-        
+
         return await this.sendEmail({
             to: recipientEmail,
             subject: '🔐 Green Guardian - Password Reset Request',
