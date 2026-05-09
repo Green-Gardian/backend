@@ -1,42 +1,44 @@
-const SibApiV3Sdk = require('sib-api-v3-sdk');
+const { MailerSend, EmailParams, Sender, Recipient } = require('mailersend');
 require('dotenv').config();
 
 class EmailService {
     constructor() {
-        if (process.env.BREVO_API_KEY) {
+        if (process.env.MAILERSEND_API_KEY) {
             try {
-                const defaultClient = SibApiV3Sdk.ApiClient.instance;
-                const apiKey = defaultClient.authentications['api-key'];
-                apiKey.apiKey = process.env.BREVO_API_KEY;
-
-                this.emailApi = new SibApiV3Sdk.TransactionalEmailsApi();
+                this.mailerSend = new MailerSend({
+                    apiKey: process.env.MAILERSEND_API_KEY,
+                });
                 this.fromEmail = process.env.SENDER_EMAIL || 'no-reply@greenguardian.qzz.io';
                 this.fromName = 'Green Guardian';
-                console.log('✅ Brevo email service initialized');
+                console.log('✅ MailerSend email service initialized');
             } catch (error) {
-                console.error('❌ Error initializing Brevo:', error);
-                this.emailApi = null;
+                console.error('❌ Error initializing MailerSend:', error);
+                this.mailerSend = null;
             }
         } else {
-            console.warn('⚠️ BREVO_API_KEY not configured.');
+            console.warn('⚠️ MAILERSEND_API_KEY not configured.');
+            this.mailerSend = null;
         }
     }
 
     async sendEmail({ to, subject, html }) {
         try {
-            if (!this.emailApi) {
-                const err = new Error('Brevo not configured. Please set BREVO_API_KEY environment variable.');
+            if (!this.mailerSend) {
+                const err = new Error('MailerSend not configured.');
                 err.code = 'EMAIL_CONFIG_MISSING';
                 throw err;
             }
 
-            const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
-            sendSmtpEmail.sender = { email: this.fromEmail, name: this.fromName };
-            sendSmtpEmail.to = [{ email: to }];
-            sendSmtpEmail.subject = subject;
-            sendSmtpEmail.htmlContent = html;
+            const sentFrom = new Sender(this.fromEmail, this.fromName);
+            const recipients = [new Recipient(to)];
 
-            const result = await this.emailApi.sendTransacEmail(sendSmtpEmail);
+            const emailParams = new EmailParams()
+                .setFrom(sentFrom)
+                .setTo(recipients)
+                .setSubject(subject)
+                .setHtml(html);
+
+            const result = await this.mailerSend.email.send(emailParams);
             console.log(`✅ Email sent successfully to ${to}`);
             return result;
         } catch (error) {
