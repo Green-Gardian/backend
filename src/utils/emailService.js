@@ -4,11 +4,20 @@ require('dotenv').config();
 class EmailService {
     constructor() {
         if (process.env.BREVO_API_KEY) {
-            const client = brevo.ApiClient.instance;
-            client.authentications['api-key'].apiKey = process.env.BREVO_API_KEY;
-            this.emailApi = new brevo.TransactionalEmailsApi();
-            this.fromEmail = process.env.SENDER_EMAIL || 'no-reply@greenguardian.qzz.io';
-            this.fromName = 'Green Guardian';
+            try {
+                // Initialize Brevo API client
+                const apiInstance = new brevo.TransactionalEmailsApi();
+                const apiKey = apiInstance.authentications['apiKey'];
+                apiKey.apiKey = process.env.BREVO_API_KEY;
+
+                this.emailApi = apiInstance;
+                this.fromEmail = process.env.SENDER_EMAIL || 'no-reply@greenguardian.qzz.io';
+                this.fromName = 'Green Guardian';
+                console.log('✅ Brevo email service initialized');
+            } catch (error) {
+                console.error('❌ Error initializing Brevo:', error);
+                this.emailApi = null;
+            }
         } else {
             console.warn('⚠️  BREVO_API_KEY not configured. Email functionality will be disabled.');
         }
