@@ -7,7 +7,7 @@ class EmailService {
             try {
                 // Initialize Brevo API client
                 const apiInstance = new brevo.TransactionalEmailsApi();
-                const apiKey = apiInstance.authentications['apiKey'];
+                const apiKey = apiInstance.authentications['api-key'];
                 apiKey.apiKey = process.env.BREVO_API_KEY;
 
                 this.emailApi = apiInstance;
