@@ -3,6 +3,10 @@ require('dotenv').config();
 
 class EmailService {
     constructor() {
+            console.log('🔑 MAILJET_API_KEY present:', !!process.env.MAILJET_API_KEY);
+    console.log('🔑 MAILJET_SECRET_KEY present:', !!process.env.MAILJET_SECRET_KEY);
+    console.log('📧 SENDER_EMAIL:', process.env.SENDER_EMAIL);
+    console.log('🌐 FRONTEND_URL:', process.env.FRONTEND_URL);
         if (process.env.MAILJET_API_KEY && process.env.MAILJET_SECRET_KEY) {
             this.client = Mailjet.apiConnect(
                 process.env.MAILJET_API_KEY,
