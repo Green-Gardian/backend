@@ -1,44 +1,39 @@
-const { MailerSend, EmailParams, Sender, Recipient } = require('mailersend');
+const Mailjet = require('node-mailjet');
 require('dotenv').config();
 
 class EmailService {
     constructor() {
-        if (process.env.MAILERSEND_API_KEY) {
-            try {
-                this.mailerSend = new MailerSend({
-                    apiKey: process.env.MAILERSEND_API_KEY,
-                });
-                this.fromEmail = process.env.SENDER_EMAIL || 'no-reply@greenguardian.qzz.io';
-                this.fromName = 'Green Guardian';
-                console.log('✅ MailerSend email service initialized');
-            } catch (error) {
-                console.error('❌ Error initializing MailerSend:', error);
-                this.mailerSend = null;
-            }
+        if (process.env.MAILJET_API_KEY && process.env.MAILJET_SECRET_KEY) {
+            this.client = Mailjet.apiConnect(
+                process.env.MAILJET_API_KEY,
+                process.env.MAILJET_SECRET_KEY
+            );
+            this.fromEmail = process.env.SENDER_EMAIL || 'no-reply@greenguardian.qzz.io';
+            this.fromName = 'Green Guardian';
+            console.log('✅ Mailjet email service initialized');
         } else {
-            console.warn('⚠️ MAILERSEND_API_KEY not configured.');
-            this.mailerSend = null;
+            console.warn('⚠️ Mailjet API keys not configured.');
+            this.client = null;
         }
     }
 
     async sendEmail({ to, subject, html }) {
         try {
-            if (!this.mailerSend) {
-                const err = new Error('MailerSend not configured.');
+            if (!this.client) {
+                const err = new Error('Mailjet not configured.');
                 err.code = 'EMAIL_CONFIG_MISSING';
                 throw err;
             }
 
-            const sentFrom = new Sender(this.fromEmail, this.fromName);
-            const recipients = [new Recipient(to)];
+            const result = await this.client.post('send', { version: 'v3.1' }).request({
+                Messages: [{
+                    From: { Email: this.fromEmail, Name: this.fromName },
+                    To: [{ Email: to }],
+                    Subject: subject,
+                    HTMLPart: html
+                }]
+            });
 
-            const emailParams = new EmailParams()
-                .setFrom(sentFrom)
-                .setTo(recipients)
-                .setSubject(subject)
-                .setHtml(html);
-
-            const result = await this.mailerSend.email.send(emailParams);
             console.log(`✅ Email sent successfully to ${to}`);
             return result;
         } catch (error) {
