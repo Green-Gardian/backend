@@ -3,10 +3,6 @@ require('dotenv').config();
 
 class EmailService {
     constructor() {
-            console.log('🔑 MAILJET_API_KEY present:', !!process.env.MAILJET_API_KEY);
-    console.log('🔑 MAILJET_SECRET_KEY present:', !!process.env.MAILJET_SECRET_KEY);
-    console.log('📧 SENDER_EMAIL:', process.env.SENDER_EMAIL);
-    console.log('🌐 FRONTEND_URL:', process.env.FRONTEND_URL);
         if (process.env.MAILJET_API_KEY && process.env.MAILJET_SECRET_KEY) {
             this.client = Mailjet.apiConnect(
                 process.env.MAILJET_API_KEY,
@@ -57,27 +53,12 @@ class EmailService {
     }
 
     async sendPasswordResetEmail(recipientUsername, recipientEmail, resetToken, resetEmailHTML) {
-        console.log('📧 sendPasswordResetEmail called');
-        console.log('📧 recipientEmail:', recipientEmail);
-        console.log('📧 resetEmailHTML type:', typeof resetEmailHTML);  // should be 'function'
-        console.log('📧 FRONTEND_URL:', process.env.FRONTEND_URL);
-        
-        try {
-            const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
-            console.log('📧 resetLink:', resetLink);
-            
-            const html = resetEmailHTML(recipientUsername, resetLink);
-            console.log('📧 HTML generated, length:', html?.length);
-            
-            return await this.sendEmail({
-                to: recipientEmail,
-                subject: '🔐 Green Guardian - Password Reset Request',
-                html
-            });
-        } catch (err) {
-            console.error('❌ sendPasswordResetEmail inner error:', err);
-            throw err;
-        }
+        const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
+        return await this.sendEmail({
+            to: recipientEmail,
+            subject: '🔐 Green Guardian - Password Reset Request',
+            html: resetEmailHTML(recipientUsername, resetLink)
+        });
     }
 }
 
