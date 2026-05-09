@@ -57,12 +57,27 @@ class EmailService {
     }
 
     async sendPasswordResetEmail(recipientUsername, recipientEmail, resetToken, resetEmailHTML) {
-        const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
-        return await this.sendEmail({
-            to: recipientEmail,
-            subject: '🔐 Green Guardian - Password Reset Request',
-            html: resetEmailHTML(recipientUsername, resetLink)
-        });
+        console.log('📧 sendPasswordResetEmail called');
+        console.log('📧 recipientEmail:', recipientEmail);
+        console.log('📧 resetEmailHTML type:', typeof resetEmailHTML);  // should be 'function'
+        console.log('📧 FRONTEND_URL:', process.env.FRONTEND_URL);
+        
+        try {
+            const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
+            console.log('📧 resetLink:', resetLink);
+            
+            const html = resetEmailHTML(recipientUsername, resetLink);
+            console.log('📧 HTML generated, length:', html?.length);
+            
+            return await this.sendEmail({
+                to: recipientEmail,
+                subject: '🔐 Green Guardian - Password Reset Request',
+                html
+            });
+        } catch (err) {
+            console.error('❌ sendPasswordResetEmail inner error:', err);
+            throw err;
+        }
     }
 }
 
