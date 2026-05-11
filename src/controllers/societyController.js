@@ -1,14 +1,24 @@
 const { pool } = require("../config/db");
+const websocketService = require("../services/websocketService");
 
 const addSociety = async (req, res) => {
   try {
-    const { societyName, address, city, state } = req.body;
+    const { societyName, address, city, state, registrationNumber, postalCode, contactEmail, contactPhone } = req.body;
     if (!societyName || !address || !city || !state) {
       return res.status(400).json({ message: "All fields are required." });
     }
+
+    if (registrationNumber) {
+      const dupCheck = await pool.query(`SELECT id FROM societies WHERE registration_number = $1`, [registrationNumber]);
+      if (dupCheck.rows.length > 0) {
+        return res.status(400).json({ message: "A society with this registration number already exists." });
+      }
+    }
+
     const query = {
-      text: `INSERT INTO societies (society_name, address, city, state) VALUES ($1, $2, $3, $4) RETURNING *`,
-      values: [societyName, address, city, state],
+      text: `INSERT INTO societies (society_name, address, city, state, registration_number, postal_code, contact_email, contact_phone)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      values: [societyName, address, city, state, registrationNumber || null, postalCode || null, contactEmail || null, contactPhone || null],
     };
 
     const user = req.user;
@@ -68,15 +78,25 @@ const getSocietyById = async (req, res) => {
 
 const updateSociety = async (req, res) => {
   const { id } = req.params;
-  const { societyName, address, city, state } = req.body;
+  const { societyName, address, city, state, registrationNumber, postalCode, contactEmail, contactPhone } = req.body;
 
   if (!societyName || !address || !city || !state) {
     return res.status(400).json({ message: "All fields are required." });
   }
 
+  if (registrationNumber) {
+    const dupCheck = await pool.query(`SELECT id FROM societies WHERE registration_number = $1 AND id != $2`, [registrationNumber, id]);
+    if (dupCheck.rows.length > 0) {
+      return res.status(400).json({ message: "A society with this registration number already exists." });
+    }
+  }
+
   const query = {
-    text: `UPDATE societies SET society_name = $1, address = $2, city = $3, state = $4 WHERE id = $5 RETURNING *`,
-    values: [societyName, address, city, state, id],
+    text: `UPDATE societies
+           SET society_name = $1, address = $2, city = $3, state = $4,
+               registration_number = $5, postal_code = $6, contact_email = $7, contact_phone = $8
+           WHERE id = $9 RETURNING *`,
+    values: [societyName, address, city, state, registrationNumber || null, postalCode || null, contactEmail || null, contactPhone || null, id],
   };
 
   try {
@@ -119,6 +139,11 @@ const blockSociety = async (req, res) => {
       `UPDATE users SET is_blocked = TRUE WHERE society_id = $1`,
       [id]
     );
+
+    // Force-logout all active sessions in this society via WebSocket
+    websocketService.sendToSociety(id, 'force-logout', {
+      reason: 'Society has been blocked. Your access has been revoked.',
+    });
 
     return res.status(200).json({
       message: "Society blocked successfully. All users in this society have been blocked.",
