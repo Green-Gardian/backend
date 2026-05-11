@@ -173,27 +173,37 @@ const getDrivers = async (req, res) => {
   try {
     const role = req.user.role;
 
-    if (role === "admin" || role === "sub_admin" || role === "super_admin") {
-      // Query to get drivers along with their latest location
-      // Using LATERAL join for PostgreSQL to get the most recent location per driver efficiently
+    if (role === "super_admin") {
       const q = await pool.query(`
-        SELECT u.*, dl.latitude, dl.longitude, dl.recorded_at as last_location_update 
-        FROM users u 
+        SELECT u.*, dl.latitude, dl.longitude, dl.recorded_at as last_location_update
+        FROM users u
         LEFT JOIN LATERAL (
-          SELECT latitude, longitude, recorded_at 
-          FROM driver_locations 
-          WHERE driver_id = u.id 
-          ORDER BY recorded_at DESC 
+          SELECT latitude, longitude, recorded_at
+          FROM driver_locations
+          WHERE driver_id = u.id
+          ORDER BY recorded_at DESC
           LIMIT 1
         ) dl ON true
         WHERE u.role = 'driver'
       `);
+      return res.status(200).json({ message: "Drivers retrieved successfully", drivers: q.rows, count: q.rows.length });
+    }
 
-      return res.status(200).json({
-        message: "Drivers retrieved successfully",
-        drivers: q.rows,
-        count: q.rows.length,
-      });
+    if (role === "admin" || role === "sub_admin") {
+      const q = await pool.query(`
+        SELECT u.*, dl.latitude, dl.longitude, dl.recorded_at as last_location_update
+        FROM users u
+        LEFT JOIN LATERAL (
+          SELECT latitude, longitude, recorded_at
+          FROM driver_locations
+          WHERE driver_id = u.id
+          ORDER BY recorded_at DESC
+          LIMIT 1
+        ) dl ON true
+        WHERE u.role = 'driver'
+          AND u.society_id = $1
+      `, [req.user.society_id]);
+      return res.status(200).json({ message: "Drivers retrieved successfully", drivers: q.rows, count: q.rows.length });
     }
 
     if (role === "driver") {

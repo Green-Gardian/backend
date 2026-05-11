@@ -49,8 +49,9 @@ class AlertService {
             }
         });
 
-        // Send WebSocket health check every 5 minutes
-        cron.schedule('*/5 * * * *', async () => {
+        // WebSocket health check every 5 minutes — use setInterval to avoid
+        // node-cron "missed execution" spam after system sleep/suspend
+        setInterval(async () => {
             try {
                 const health = websocketService.healthCheck();
                 if (health.status === 'healthy') {
@@ -61,7 +62,7 @@ class AlertService {
             } catch (error) {
                 console.error('Error in WebSocket health check:', error);
             }
-        });
+        }, 5 * 60 * 1000);
     }
 
     /**

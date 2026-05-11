@@ -10,36 +10,34 @@ class ChatService {
      */
     async createChat(societyId, participantIds, title) {
         try {
-            // Ensure all IDs are strings for consistency in TEXT[]
             const participants = participantIds.map(String);
 
-            // Check if a chat with these EXACT participants and title already exists
-            // This prevents duplicate "Customer Support" chats, but allows multiple "Task #..." chats if titles differ
             const existingChat = await pool.query(
-                `SELECT * FROM chat 
-         WHERE society_id = $1 
-         AND chatParticipants @> $2::text[] 
-         AND chatParticipants <@ $2::text[]
-         AND chatTitle = $3
+                `SELECT * FROM chat
+         WHERE society_id = $1
+         AND chatparticipants @> $2::text[]
+         AND chatparticipants <@ $2::text[]
+         AND chattitle = $3
          LIMIT 1`,
                 [societyId, participants, title]
             );
 
             if (existingChat.rows.length > 0) {
+                console.log(`[Chat] Found existing chat #${existingChat.rows[0].id} "${title}" for society ${societyId}`);
                 return existingChat.rows[0];
             }
 
-            // Create new chat
             const result = await pool.query(
-                `INSERT INTO chat (society_id, chatParticipants, chatTitle, lastMessage, status)
+                `INSERT INTO chat (society_id, chatparticipants, chattitle, lastmessage, status)
          VALUES ($1, $2, $3, $4, 'active')
          RETURNING *`,
                 [societyId, participants, title, null]
             );
 
+            console.log(`[Chat] Created new chat #${result.rows[0].id} "${title}" for society ${societyId} with participants [${participants.join(', ')}]`);
             return result.rows[0];
         } catch (error) {
-            console.error("Error in ChatService.createChat:", error);
+            console.error("[Chat] Error in createChat:", error);
             throw error;
         }
     }

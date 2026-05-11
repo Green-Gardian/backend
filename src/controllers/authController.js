@@ -247,6 +247,7 @@ const addAdminAndStaff = async (req, res) => {
         ]
     );
     const newUser = userInsert.rows[0];
+    console.log(`[User] ✅ Staff created — id=${newUser.id} role=${role} name="${firstName} ${lastName}" email=${email} society=${finalSocietyId ?? 'N/A'}`);
 
     if (currentUser.role === "sub_admin") {
       await logSubAdminActivity({
@@ -287,12 +288,12 @@ const addAdminAndStaff = async (req, res) => {
         const ChatService = require("../services/chatService");
         const adminId = await ChatService.findSocietyAdmin(finalSocietyId);
         if (adminId) {
-          // Verify if driver is already in a support chat? No, just create it.
-          await ChatService.createChat(finalSocietyId, [newUser.id, adminId], "Customer Support");
-          console.log(`✅ Created Support Chat for Driver ${newUser.id} with Admin ${adminId}`);
+          await ChatService.createChat(finalSocietyId, [newUser.id, adminId], `${firstName} ${lastName}`);
+        } else {
+          console.warn(`[Chat] ⚠️ No admin found for society ${finalSocietyId} — chat not created for driver ${newUser.id}`);
         }
       } catch (err) {
-        console.error("Error creating driver support chat:", err);
+        console.error(`[Chat] ❌ Failed to create chat for driver ${newUser.id}:`, err.message);
       }
     }
 
@@ -344,19 +345,14 @@ const addAdminAndStaff = async (req, res) => {
 
 const addResident = async (req, res) => {
   try {
-    console.log("Checkpoint 1");
-
     const { first_name, last_name, phone_number, email } = req.body;
     const requesterId = req.user?.id;
 
-    console.log("Request Body:", req.body);
-
-    console.log("Requester ID:", requesterId);
+    console.log(`[User] addResident called by user #${requesterId} — ${first_name} ${last_name} <${email}>`);
 
     if (!first_name || !last_name || !phone_number || !email) {
       return res.status(400).json({ message: "All fields are required" });
     }
-    console.log("Checkpoint 2");
 
     // Validate email
     const regex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
@@ -430,21 +426,19 @@ const addResident = async (req, res) => {
     );
 
     const newUser = insertUser.rows[0];
-    console.log("✅ Created Resident:", newUser);
+    console.log(`[User] ✅ Resident created — id=${newUser.id} name="${first_name} ${last_name}" email=${email} society=${societyId}`);
 
     // Create Customer Support Chat with Society Admin
     try {
       const ChatService = require("../services/chatService");
       const adminId = await ChatService.findSocietyAdmin(societyId);
       if (adminId) {
-        await ChatService.createChat(societyId, [newUser.id, adminId], "Customer Support");
-        console.log(`✅ Created Support Chat for Resident ${newUser.id} with Admin ${adminId}`);
+        await ChatService.createChat(societyId, [newUser.id, adminId], `${first_name} ${last_name}`);
       } else {
-        console.warn(`⚠️ No Admin found for Society ${societyId}. Chat not created.`);
+        console.warn(`[Chat] ⚠️ No admin found for society ${societyId} — chat not created for resident ${newUser.id}`);
       }
     } catch (chatError) {
-      console.error("❌ Error creating support chat:", chatError.message);
-      // Don't fail the registration if chat creation fails
+      console.error(`[Chat] ❌ Failed to create chat for resident ${newUser.id}:`, chatError.message);
     }
 
     if (requesterData.role === "sub_admin") {
@@ -705,7 +699,7 @@ const verifyEmailAndSetPassword = async (req, res) => {
         .status(400)
         .json({ message: `Confirm Password field is required.` });
     if (password !== confirmPassword)
-      return res.status(400).json({ message: `Passwords donot match.` });
+      return res.status(400).json({ message: `Passwords do not match.` });
 
     // Validate token and current verification state
     const tokenQuery = await runQuery(
