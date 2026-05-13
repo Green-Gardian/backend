@@ -766,21 +766,32 @@ const getDriverPerformance = async (req, res) => {
     const periodDays = toInt(req.query.period, 30);
     const since = new Date(Date.now() - periodDays * 24 * 60 * 60 * 1000).toISOString();
 
-    // 1. Basic Counts - All Time
+    // 1. Basic Counts - All Time (Include both driver_tasks and service_requests)
     const allTimeCompletedQ = `
-      SELECT COUNT(*)::int AS cnt 
-      FROM driver_tasks 
-      WHERE driver_id = $1 AND status = 'completed'
+      SELECT 
+        (SELECT COUNT(*)::int FROM driver_tasks WHERE driver_id = $1 AND status = 'completed') +
+        (SELECT COUNT(*)::int FROM service_requests WHERE driver_id = $1 AND status = 'completed')
+        AS cnt
     `;
     const allTimeCompletedRes = await pool.query(allTimeCompletedQ, [driverId]);
     const totalCollections = allTimeCompletedRes.rows[0]?.cnt || 0;
 
-    // 2. Period Counts (for on-time rate)
-    const assignedQ = `SELECT COUNT(*)::int AS cnt FROM driver_tasks WHERE driver_id = $1 AND assigned_at >= $2`;
+    // 2. Period Counts (for on-time rate) - Include both types
+    const assignedQ = `
+      SELECT 
+        (SELECT COUNT(*)::int FROM driver_tasks WHERE driver_id = $1 AND assigned_at >= $2) +
+        (SELECT COUNT(*)::int FROM service_requests WHERE driver_id = $1 AND created_at >= $2)
+        AS cnt
+    `;
     const assignedRes = await pool.query(assignedQ, [driverId, since]);
     const totalAssigned = assignedRes.rows[0]?.cnt || 0;
 
-    const completedQ = `SELECT COUNT(*)::int AS cnt FROM driver_tasks WHERE driver_id = $1 AND status = 'completed' AND completed_at >= $2`;
+    const completedQ = `
+      SELECT 
+        (SELECT COUNT(*)::int FROM driver_tasks WHERE driver_id = $1 AND status = 'completed' AND completed_at >= $2) +
+        (SELECT COUNT(*)::int FROM service_requests WHERE driver_id = $1 AND status = 'completed' AND completed_at >= $2)
+        AS cnt
+    `;
     const completedRes = await pool.query(completedQ, [driverId, since]);
     const totalCompleted = completedRes.rows[0]?.cnt || 0;
 
@@ -802,24 +813,25 @@ const getDriverPerformance = async (req, res) => {
       console.log('Rating calculation skipped:', err.message);
     }
 
-    // 4. This Month vs Last Month Collections
+    // 4. This Month vs Last Month Collections (Include both types)
     const thisMonthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString();
     const lastMonthStart = new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1).toISOString();
     const lastMonthEnd = new Date(new Date().getFullYear(), new Date().getMonth(), 0, 23, 59, 59).toISOString();
 
     const thisMonthQ = `
-      SELECT COUNT(*)::int AS cnt 
-      FROM driver_tasks 
-      WHERE driver_id = $1 AND status = 'completed' AND completed_at >= $2
+      SELECT 
+        (SELECT COUNT(*)::int FROM driver_tasks WHERE driver_id = $1 AND status = 'completed' AND completed_at >= $2) +
+        (SELECT COUNT(*)::int FROM service_requests WHERE driver_id = $1 AND status = 'completed' AND completed_at >= $2)
+        AS cnt
     `;
     const thisMonthRes = await pool.query(thisMonthQ, [driverId, thisMonthStart]);
     const thisMonthCollections = thisMonthRes.rows[0]?.cnt || 0;
 
     const lastMonthQ = `
-      SELECT COUNT(*)::int AS cnt 
-      FROM driver_tasks 
-      WHERE driver_id = $1 AND status = 'completed' 
-        AND completed_at >= $2 AND completed_at <= $3
+      SELECT 
+        (SELECT COUNT(*)::int FROM driver_tasks WHERE driver_id = $1 AND status = 'completed' AND completed_at >= $2 AND completed_at <= $3) +
+        (SELECT COUNT(*)::int FROM service_requests WHERE driver_id = $1 AND status = 'completed' AND completed_at >= $2 AND completed_at <= $3)
+        AS cnt
     `;
     const lastMonthRes = await pool.query(lastMonthQ, [driverId, lastMonthStart, lastMonthEnd]);
     const lastMonthCollections = lastMonthRes.rows[0]?.cnt || 0;
@@ -871,7 +883,7 @@ const getDriverPerformance = async (req, res) => {
       console.log('Complaints/commendations calculation skipped:', err.message);
     }
 
-    // 7. Weekly/Daily Breakdown for Graph (Last 7 days)
+    // 7. Weekly/Daily Breakdown for Graph (Last 7 days) - Include both types
     let weeklyData = [];
     try {
       const graphPeriod = 7;
@@ -884,19 +896,30 @@ const getDriverPerformance = async (req, res) => {
             DATE_TRUNC('day', NOW()), 
             '1 day'::interval
           ) as date
+        ),
+        bin_collections AS (
+          SELECT DATE_TRUNC('day', completed_at) as date, COUNT(*)::int as cnt
+          FROM driver_tasks
+          WHERE driver_id = $1 AND status = 'completed'
+          GROUP BY DATE_TRUNC('day', completed_at)
+        ),
+        service_collections AS (
+          SELECT DATE_TRUNC('day', completed_at) as date, COUNT(*)::int as cnt
+          FROM service_requests
+          WHERE driver_id = $1 AND status = 'completed'
+          GROUP BY DATE_TRUNC('day', completed_at)
         )
         SELECT 
           to_char(d.date, 'Dy') as week_day,
-          COUNT(dt.id)::int as collections,
+          COALESCE(bc.cnt, 0) + COALESCE(sc.cnt, 0) as collections,
           COALESCE(AVG(sr.driver_rating), 0)::numeric(3,2) as rating
         FROM dates d
-        LEFT JOIN driver_tasks dt ON DATE_TRUNC('day', dt.completed_at) = d.date 
-          AND dt.driver_id = $1 
-          AND dt.status = 'completed'
+        LEFT JOIN bin_collections bc ON bc.date = d.date
+        LEFT JOIN service_collections sc ON sc.date = d.date
         LEFT JOIN service_requests sr ON DATE_TRUNC('day', sr.completed_at) = d.date
           AND sr.driver_id = $1
           AND sr.driver_rating IS NOT NULL
-        GROUP BY d.date
+        GROUP BY d.date, bc.cnt, sc.cnt
         ORDER BY d.date ASC
       `;
 
