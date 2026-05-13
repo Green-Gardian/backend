@@ -63,6 +63,14 @@ class WebSocketService {
                 this.handleMessage(socket, data);
             });
 
+            // Driver live location events (mobile clients currently use both event names)
+            socket.on('driver:update-location', (data) => {
+                this.handleDriverLocationUpdate(socket, data);
+            });
+            socket.on('driver:location_update', (data) => {
+                this.handleDriverLocationUpdate(socket, data);
+            });
+
             // Handle disconnect
             socket.on('disconnect', () => {
                 this.handleDisconnect(socket);
@@ -73,6 +81,54 @@ class WebSocketService {
                 socket.emit('pong');
             });
         });
+    }
+
+    /**
+     * Persist driver location and broadcast to map subscribers.
+     */
+    async handleDriverLocationUpdate(socket, data) {
+        try {
+            const userId = socket.user?.id;
+            if (!userId) return;
+
+            const latitude = Number(data?.latitude);
+            const longitude = Number(data?.longitude);
+            if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+                return;
+            }
+
+            const driverRes = await pool.query(
+                `SELECT id, society_id, role, is_blocked FROM users WHERE id = $1 LIMIT 1`,
+                [userId]
+            );
+            const driver = driverRes.rows[0];
+            if (!driver || driver.role !== 'driver' || driver.is_blocked) {
+                return;
+            }
+
+            const heading = Number.isFinite(Number(data?.heading)) ? Number(data.heading) : null;
+            const speed = Number.isFinite(Number(data?.speed)) ? Number(data.speed) : null;
+            const recordedAt = data?.timestamp ? new Date(data.timestamp) : new Date();
+            const safeRecordedAt = Number.isNaN(recordedAt.getTime()) ? new Date() : recordedAt;
+
+            const insertQ = `
+                INSERT INTO driver_locations (driver_id, latitude, longitude, heading, speed, recorded_at)
+                VALUES ($1, $2, $3, $4, $5, $6)
+                RETURNING *
+            `;
+            const insertRes = await pool.query(insertQ, [
+                userId,
+                latitude,
+                longitude,
+                heading,
+                speed,
+                safeRecordedAt.toISOString(),
+            ]);
+
+            this.broadcastDriverLocation(userId, driver.society_id, insertRes.rows[0]);
+        } catch (error) {
+            console.error('driver location socket update error:', error.message || error);
+        }
     }
 
     /**

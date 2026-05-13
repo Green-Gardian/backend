@@ -559,14 +559,26 @@ const getServiceRequestById = async (req, res) => {
           ua.city,
           ua.postal_code,
           ua.landmark,
+          ua.latitude as latitude,
+          ua.longitude as longitude,
           driver.first_name as driver_first_name,
           driver.last_name as driver_last_name,
           driver.phone_number as driver_phone,
-          driver.email as driver_email
+          driver.email as driver_email,
+          dl.latitude as driver_latitude,
+          dl.longitude as driver_longitude,
+          dl.recorded_at as driver_location_recorded_at
         FROM service_requests sr
         LEFT JOIN service_types st ON sr.service_type_id = st.id
         LEFT JOIN user_addresses ua ON sr.address_id = ua.id
         LEFT JOIN users driver ON sr.driver_id = driver.id
+        LEFT JOIN LATERAL (
+          SELECT latitude, longitude, recorded_at
+          FROM driver_locations
+          WHERE driver_id = sr.driver_id
+          ORDER BY recorded_at DESC
+          LIMIT 1
+        ) dl ON true
         WHERE sr.id = $1 AND sr.user_id = $2
       `,
       [requestId, userId]

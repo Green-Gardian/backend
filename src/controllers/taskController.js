@@ -19,8 +19,15 @@ async function createTask(req, res) {
       if (sRes.rows[0]) society_id = sRes.rows[0].id;
     }
 
-    const insertQ = `INSERT INTO tasks (bin_id, society_id, fill_level, priority, notes, created_by) VALUES ($1,$2,$3,$4,$5) RETURNING *`;
-    const insertRes = await pool.query(insertQ, [bin_id, society_id, fill_level || 0, priority || 'normal', notes ? JSON.stringify(notes) : '{}' ]);
+    const insertQ = `INSERT INTO tasks (bin_id, society_id, fill_level, priority, notes, created_by) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`;
+    const insertRes = await pool.query(insertQ, [
+      bin_id,
+      society_id,
+      fill_level || 0,
+      priority || 'normal',
+      notes ? JSON.stringify(notes) : '{}',
+      req.user ? req.user.id : null,
+    ]);
     const task = insertRes.rows[0];
 
     // attempt auto-assign with websocket notification
@@ -60,7 +67,7 @@ async function getDriverTasks(req, res) {
 // POST /tasks/:id/status - Update task status (driver acceptance, arrival, completion)
 async function updateTaskStatus(req, res) {
   try {
-    const { taskId } = req.params;
+    const { id: taskId } = req.params;
     const { status, notes, photo_url } = req.body;
     const driverId = req.user.id;
 

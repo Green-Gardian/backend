@@ -5,6 +5,7 @@
  */
 const websocketService = require('./websocketService');
 const { pool } = require('../config/db');
+const assignmentService = require('./assignmentService');
 
 const getBinModel = () => require('../models/bin');
 
@@ -46,6 +47,14 @@ async function fillTick(binId) {
       fill_level: newLevel,
       status:     newStatus,
     });
+
+    // Keep mock simulation behavior aligned with real IoT/manual bin updates.
+    try {
+      await assignmentService.checkAndCreateTask(updated, websocketService);
+      await assignmentService.checkAndCompleteTask(updated, websocketService);
+    } catch (taskErr) {
+      console.error('[MockBin] auto-task pipeline failed:', taskErr.message);
+    }
 
     // Persist to bin_logs
     try {
@@ -110,6 +119,17 @@ function stopSimulation(binId) {
 async function start() {
   const binModel = getBinModel();
 
+  // Prefer a society that has active drivers so assignments can be tested end-to-end.
+  const societyRes = await pool.query(
+    `SELECT s.id, s.society_name, COUNT(u.id) AS driver_count
+     FROM societies s
+     LEFT JOIN users u ON u.society_id = s.id AND u.role = 'driver' AND u.is_blocked = false
+     GROUP BY s.id, s.society_name
+     ORDER BY COUNT(u.id) DESC, s.id ASC
+     LIMIT 1`
+  );
+  const simulationSocietyName = societyRes.rows[0]?.society_name || 'Mock Society';
+
   // Find or create mock bin
   const bins = await binModel.getBins();
   let mockBin = bins.find(b => b.name === MOCK_BIN_NAME);
@@ -118,16 +138,20 @@ async function start() {
     mockBin = await binModel.createBin({
       name:    MOCK_BIN_NAME,
       address: '1 Mock Street, Test City',
-      society: 'Mock Society',
-      latitude:   0.0,
-      longitude:  0.0,
+      society: simulationSocietyName,
+      latitude:   33.6844,
+      longitude:  73.0479,
       fill_level: 0,
       status:     'idle',
     });
     console.log(`[MockBin] created bin id=${mockBin.id}`);
   } else {
     // Reset to 0 for a fresh run
-    mockBin = await binModel.updateBin(mockBin.id, { fill_level: 0, status: 'idle' });
+    mockBin = await binModel.updateBin(mockBin.id, {
+      fill_level: 0,
+      status: 'idle',
+      society: simulationSocietyName,
+    });
     console.log(`[MockBin] reset existing bin id=${mockBin.id} to 0%`);
   }
 

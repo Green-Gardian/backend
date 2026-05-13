@@ -28,6 +28,14 @@ const splitName = (fullName = "") => {
 
 const usernameFromEmail = (email) => String(email || "").trim().split("@")[0];
 
+const normalizeDriverTaskStatus = (status) => {
+  const s = String(status || '').toLowerCase();
+  if (['completed', 'failed', 'cancelled'].includes(s)) return s;
+  if (['accepted', 'enroute', 'arrived', 'in_progress'].includes(s)) return 'in_progress';
+  if (['assigned', 'created', 'pending', 'approved'].includes(s)) return 'pending';
+  return s || 'pending';
+};
+
 const requireRole = (reqUser, roles = []) => {
   if (!roles.includes(reqUser?.role)) {
     const err = new Error("Access denied");
@@ -876,6 +884,7 @@ const getCurrentTasks = async (req, res) => {
     const binTasksResult = await pool.query(binTasksQ, [req.user.id]);
 
     const binTasks = binTasksResult.rows.map((r) => ({
+      status: normalizeDriverTaskStatus(r.driver_task_status || r.task_status || 'assigned'),
       id: r.id,
       driver_task_id: r.driver_task_id,
       task_type: 'bin_collection',
@@ -883,10 +892,10 @@ const getCurrentTasks = async (req, res) => {
       bin_id: r.bin_name || `BIN_${r.bin_id}`,
       title: r.bin_name ? `Collect: ${r.bin_name}` : 'Bin Collection',
       priority: r.priority || 'normal',
-      status: r.driver_task_status || r.task_status || 'assigned',
+      raw_status: r.driver_task_status || r.task_status || 'assigned',
       location: {
-        lat: r.bin_latitude || null,
-        lng: r.bin_longitude || null,
+        lat: r.bin_latitude !== null && r.bin_latitude !== undefined ? parseFloat(r.bin_latitude) : null,
+        lng: r.bin_longitude !== null && r.bin_longitude !== undefined ? parseFloat(r.bin_longitude) : null,
         address: r.bin_address || null,
       },
       estimated_time: (r.task_notes && r.task_notes.estimated_time) || null,
@@ -949,7 +958,8 @@ const getCurrentTasks = async (req, res) => {
       service_type: r.service_type_name,
       service_category: r.service_category,
       priority: r.priority || 'normal',
-      status: r.status,
+      status: normalizeDriverTaskStatus(r.status),
+      raw_status: r.status,
       location: {
         lat: r.latitude ? parseFloat(r.latitude) : null,
         lng: r.longitude ? parseFloat(r.longitude) : null,
