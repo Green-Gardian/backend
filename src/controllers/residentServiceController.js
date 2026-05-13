@@ -515,8 +515,49 @@ const createServiceRequest = async (req, res) => {
       [q.rows[0].id, userId]
     );
 
-    // Auto-assign driver to this service request
+    // Add RS200 service request fee to resident dues payments
     const serviceRequestId = q.rows[0].id;
+    const billingMonthDate = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1));
+    const billingMonth = billingMonthDate.toISOString().slice(0, 10);
+    const dueDate = new Date(Date.UTC(billingMonthDate.getUTCFullYear(), billingMonthDate.getUTCMonth(), 7)).toISOString().slice(0, 10);
+    
+    try {
+      const serviceFeeCents = 20000; // RS200 in cents
+      const currency = process.env.STRIPE_CURRENCY || "pkr";
+      
+      await run(
+        `
+          INSERT INTO resident_dues_payments 
+            (user_id, society_id, billing_month, due_date, amount_cents, currency, status, metadata)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          ON CONFLICT (user_id, billing_month) DO UPDATE SET 
+            amount_cents = resident_dues_payments.amount_cents + $5,
+            metadata = jsonb_set(
+              COALESCE(resident_dues_payments.metadata, '{}'::jsonb),
+              '{service_requests}',
+              COALESCE(resident_dues_payments.metadata->'service_requests', '[]'::jsonb) || jsonb_build_array($9)
+            ),
+            updated_at = CURRENT_TIMESTAMP
+        `,
+        [
+          userId,
+          req.user.society_id || null,
+          billingMonth,
+          dueDate,
+          serviceFeeCents,
+          currency,
+          'due',
+          JSON.stringify({ service_requests: [serviceRequestId], reason: 'Service request fee' }),
+          serviceRequestId
+        ]
+      );
+      console.log(`✅ RS200 service fee added to dues for Service Request #${serviceRequestId}`);
+    } catch (feeErr) {
+      console.error(`⚠️ Failed to add service fee for Service Request #${serviceRequestId}:`, feeErr);
+      // Continue - fees failure should not block service request creation
+    }
+
+    // Auto-assign driver to this service request
     let assignment = null;
     try {
       assignment = await assignmentService.assignServiceRequest(serviceRequestId, websocketService);
@@ -1013,6 +1054,79 @@ const getDashboardStats = async (req, res) => {
 };
 
 /* -------------------------------------------------------
+ * DUES AND PAYMENTS
+ * ----------------------------------------------------- */
+
+const getResidentPendingDues = async (req, res) => {
+  const userId = req.user.id;
+  
+  try {
+    // Get all pending/overdue dues for the resident
+    const duesResult = await run(
+      `
+        SELECT 
+          id,
+          billing_month,
+          due_date,
+          amount_cents,
+          currency,
+          status,
+          created_at,
+          metadata,
+          paid_at
+        FROM resident_dues_payments
+        WHERE user_id = $1 AND status IN ('pending', 'overdue')
+        ORDER BY due_date DESC
+      `,
+      [userId]
+    );
+
+    const dues = duesResult.rows.map(row => ({
+      id: row.id,
+      billingMonth: row.billing_month,
+      dueDate: row.due_date,
+      amount: row.amount_cents / 100,
+      currency: row.currency || 'PKR',
+      status: row.status,
+      createdAt: row.created_at,
+      paidAt: row.paid_at,
+      metadata: row.metadata,
+      isServiceRequestFee: row.metadata?.service_requests?.length > 0 || false,
+      serviceRequests: row.metadata?.service_requests || []
+    }));
+
+    // Calculate totals
+    const totalPending = dues.reduce((sum, due) => {
+      if (due.status === 'pending' || due.status === 'overdue') {
+        return sum + Number(due.amount || 0);
+      }
+      return sum;
+    }, 0);
+
+    const regularDues = dues.filter(d => !d.isServiceRequestFee);
+    const serviceFees = dues.filter(d => d.isServiceRequestFee);
+
+    return res.status(200).json({
+      success: true,
+      dues: {
+        pending: dues.filter(d => d.status === 'pending'),
+        overdue: dues.filter(d => d.status === 'overdue'),
+        all: dues
+      },
+      summary: {
+        totalPending,
+        regularDuesCount: regularDues.length,
+        serviceFeeCount: serviceFees.length,
+        regularDuesTotalAmount: regularDues.reduce((sum, d) => sum + Number(d.amount || 0), 0),
+        serviceFeesTotalAmount: serviceFees.reduce((sum, d) => sum + Number(d.amount || 0), 0)
+      }
+    });
+  } catch (error) {
+    return fail500(res, "Get resident pending dues error", error);
+  }
+};
+
+/* -------------------------------------------------------
  * Exports
  * ----------------------------------------------------- */
 
@@ -1046,4 +1160,7 @@ module.exports = {
   // Messages
   getRequestMessages,
   sendMessage,
+
+  // Dues and Payments
+  getResidentPendingDues,
 };

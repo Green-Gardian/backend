@@ -30,7 +30,10 @@ const {
 
     // Messages
     getRequestMessages,
-    sendMessage
+    sendMessage,
+
+    // Dues and Payments
+    getResidentPendingDues
 } = require('../controllers/residentServiceController');
 
 const {
@@ -109,6 +112,7 @@ router.get('/dashboard/stats', verifyAdminOrResident, getDashboardStats);
 // ===== MONTHLY DUES ROUTES (RESIDENT) =====
 router.get('/dues/status', verifyResident, getMyDueStatus);
 router.get('/dues/history', verifyResident, getMyDueHistory);
+router.get('/dues/pending', verifyResident, getResidentPendingDues);
 router.post('/dues/checkout-session', verifyResident, createDueCheckoutSession);
 router.post('/dues/verify-session', verifyResident, verifyDueCheckoutSession);
 
