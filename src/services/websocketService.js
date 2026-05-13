@@ -89,7 +89,14 @@ class WebSocketService {
             }
 
             const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET);
-            socket.user = { id: decoded.id, username: decoded.username };
+            socket.user = { id: decoded.id, username: decoded.username, society_id: decoded.society_id };
+
+            // Join society room so force-logout broadcasts reach this socket
+            if (decoded.society_id) {
+                socket.join(`society_${decoded.society_id}`);
+            }
+            // Join personal room
+            socket.join(`user_${decoded.id}`);
 
             console.log("User connected via JWT:", socket.user.id, socket.user.username);
         } catch (err) {

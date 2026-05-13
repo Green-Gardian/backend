@@ -191,19 +191,15 @@ const getVehicles = async (req, res) => {
         let query;
         let params = [];
 
-        if (userRole === "admin" || userRole === "sub_admin" || userRole === "super_admin") {
-            query = `
-                SELECT * 
-                FROM vehicle v 
-                ORDER BY v.id DESC
-            `;
+        if (userRole === "super_admin") {
+            query = `SELECT * FROM vehicle v ORDER BY v.id DESC`;
+        } else if (userRole === "admin" || userRole === "sub_admin") {
+            const societyId = req.user.society_id;
+            query = `SELECT * FROM vehicle v WHERE v.society_id = $1 ORDER BY v.id DESC`;
+            params = [societyId];
         } else if (userRole === "driver") {
-            query = `
-                SELECT * 
-                FROM vehicle v 
-                ORDER BY v.id DESC
-            `;
-            // Remove params for driver role since query doesn't use parameters
+            query = `SELECT * FROM vehicle v WHERE v.user_id = $1 ORDER BY v.id DESC`;
+            params = [req.user.id];
         } else {
             return res.status(403).json({
                 message: "Access denied",

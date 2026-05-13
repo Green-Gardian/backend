@@ -27,22 +27,30 @@ exports.getChatMessages = async (req, res) => {
 
 exports.getChatGroup = async (req, res) => {
   const userId = req.user.id.toString();
+  const { role, society_id: societyId } = req.user;
 
   try {
-    const result = await pool.query(
-      `SELECT * FROM chat
-       WHERE chatparticipants @> $1
-       ORDER BY updated_at DESC`,
-      [[userId]]
-    );
+    let result;
 
-    if (result.rows.length === 0) {
-      return res.status(200).json([]);
+    if (role === "super_admin") {
+      result = await pool.query(
+        `SELECT * FROM chat ORDER BY updated_at DESC`
+      );
+    } else if (role === "admin" || role === "sub_admin") {
+      result = await pool.query(
+        `SELECT * FROM chat WHERE society_id = $1 ORDER BY updated_at DESC`,
+        [societyId]
+      );
+    } else {
+      result = await pool.query(
+        `SELECT * FROM chat
+         WHERE chatparticipants @> $1
+         ORDER BY updated_at DESC`,
+        [[userId]]
+      );
     }
 
-    const chats = result.rows;
-
-    res.json(chats);
+    res.json(result.rows);
   } catch (err) {
     console.error("DB error:", err.message);
     res.status(500).json({ error: "Internal server error" });
@@ -116,14 +124,45 @@ exports.initiateSupportChat = async (req, res) => {
   }
 
   try {
+    const userResult = await pool.query(
+      `SELECT first_name, last_name FROM users WHERE id = $1`,
+      [userId]
+    );
+    const userRow = userResult.rows[0];
+    const chatTitle = userRow
+      ? `${userRow.first_name || ""} ${userRow.last_name || ""}`.trim() || req.user.username
+      : req.user.username;
+
     const adminId = await ChatService.findSocietyAdmin(societyId);
     if (!adminId) {
       return res.status(404).json({ error: "Society admin not found" });
     }
 
-    // Pass the societyId, participant array, and title
-    const chat = await ChatService.createChat(societyId, [userId, adminId], "Customer Support");
+    const participants = [String(userId), String(adminId)];
 
+    // Rename any old "Customer Support" chat for this pair
+    console.log(`[Chat] initiateSupportChat — user #${userId} "${chatTitle}" society=${societyId} admin=${adminId}`);
+
+    const oldChat = await pool.query(
+      `SELECT id FROM chat
+       WHERE society_id = $1
+         AND chatparticipants @> $2::text[]
+         AND chatparticipants <@ $2::text[]
+         AND chattitle = 'Customer Support'
+       LIMIT 1`,
+      [societyId, participants]
+    );
+
+    if (oldChat.rows.length > 0) {
+      console.log(`[Chat] Renaming legacy "Customer Support" chat #${oldChat.rows[0].id} → "${chatTitle}"`);
+      const updated = await pool.query(
+        `UPDATE chat SET chattitle = $1, updated_at = now() WHERE id = $2 RETURNING *`,
+        [chatTitle, oldChat.rows[0].id]
+      );
+      return res.json(updated.rows[0]);
+    }
+
+    const chat = await ChatService.createChat(societyId, [userId, adminId], chatTitle);
     res.json(chat);
   } catch (err) {
     console.error("Error initiating support chat:", err);

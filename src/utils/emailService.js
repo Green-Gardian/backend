@@ -1,35 +1,40 @@
-const { Resend } = require('resend');
+const Mailjet = require('node-mailjet');
 require('dotenv').config();
 
 class EmailService {
     constructor() {
-        if (process.env.RESEND_API_KEY) {
-            this.resend = new Resend(process.env.RESEND_API_KEY);
-            this.fromEmail = process.env.SENDER_EMAIL || 'onboarding@resend.dev';
+        if (process.env.MAILJET_API_KEY && process.env.MAILJET_SECRET_KEY) {
+            this.client = Mailjet.apiConnect(
+                process.env.MAILJET_API_KEY,
+                process.env.MAILJET_SECRET_KEY
+            );
+            this.fromEmail = process.env.SENDER_EMAIL || 'no-reply@greenguardian.qzz.io';
+            this.fromName = 'Green Guardian';
+            console.log('✅ Mailjet email service initialized');
         } else {
-            console.warn('⚠️  RESEND_API_KEY not configured. Email functionality will be disabled.');
+            console.warn('⚠️ Mailjet API keys not configured.');
+            this.client = null;
         }
     }
 
-    /**
-     * Send email using Resend
-     */
     async sendEmail({ to, subject, html }) {
         try {
-            if (!this.resend) {
-                const err = new Error('Resend not configured. Please set RESEND_API_KEY environment variable.');
+            if (!this.client) {
+                const err = new Error('Mailjet not configured.');
                 err.code = 'EMAIL_CONFIG_MISSING';
                 throw err;
             }
 
-            const result = await this.resend.emails.send({
-                from: this.fromEmail,
-                to: to,
-                subject: subject,
-                html: html
+            const result = await this.client.post('send', { version: 'v3.1' }).request({
+                Messages: [{
+                    From: { Email: this.fromEmail, Name: this.fromName },
+                    To: [{ Email: to }],
+                    Subject: subject,
+                    HTMLPart: html
+                }]
             });
 
-            console.log(`✅ Email sent successfully to ${to}. Message ID: ${result.id}`);
+            console.log(`✅ Email sent successfully to ${to}`);
             return result;
         } catch (error) {
             console.error('❌ Error sending email:', error);
@@ -38,12 +43,8 @@ class EmailService {
         }
     }
 
-    /**
-     * Send verification email
-     */
     async sendVerificationEmail(recipientUsername, recipientEmail, verificationToken, verificationEmailHTML) {
         const verificationLink = `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}`;
-        
         return await this.sendEmail({
             to: recipientEmail,
             subject: '🌱 Welcome to Green Guardian - Verify Your Email',
@@ -51,12 +52,8 @@ class EmailService {
         });
     }
 
-    /**
-     * Send password reset email
-     */
     async sendPasswordResetEmail(recipientUsername, recipientEmail, resetToken, resetEmailHTML) {
         const resetLink = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
-        
         return await this.sendEmail({
             to: recipientEmail,
             subject: '🔐 Green Guardian - Password Reset Request',

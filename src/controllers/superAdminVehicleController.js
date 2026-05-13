@@ -18,66 +18,56 @@ const addVehicleToInventory = async (req, res) => {
             fuelType,
             purchasedDate,
             purchasePrice,
-            // Registration & legal
             registrationDate,
             registrationExpiryDate,
             insuranceExpiryDate,
             fitnessCertificateExpiry,
             insuranceProvider,
             insurancePolicyNumber,
-            // Operational
             odometerReading,
             lastMaintenanceDate,
             nextMaintenanceDue,
             lastServiceOdometer,
-            // Additional
-            notes
+            notes,
+            societyId,
         } = req.body;
 
-        const superAdminId = req.user.id;
-
         if (!plateNo || !status) {
-            return res.status(400).json({
-                message: "Plate number and status are required",
-            });
+            return res.status(400).json({ message: "Plate number and status are required" });
         }
 
-        // Check if vehicle with this plate number already exists
-        const vehicleCheckQuery = `SELECT * FROM vehicle WHERE plate_no = $1`;
-        const vehicleCheckResult = await pool.query(vehicleCheckQuery, [plateNo]);
-
+        const vehicleCheckResult = await pool.query(`SELECT id FROM vehicle WHERE plate_no = $1`, [plateNo]);
         if (vehicleCheckResult.rows.length > 0) {
-            return res.status(400).json({
-                message: "Vehicle with this plate number already exists",
-            });
+            return res.status(400).json({ message: "Vehicle with this plate number already exists" });
         }
 
-        // Check if VIN number already exists (if provided)
         if (vinNumber) {
-            const vinCheckQuery = `SELECT * FROM vehicle WHERE vin_number = $1`;
-            const vinCheckResult = await pool.query(vinCheckQuery, [vinNumber]);
-
-            if (vinCheckResult.rows.length > 0) {
-                return res.status(400).json({
-                    message: "Vehicle with this VIN number already exists",
-                });
+            const vinCheck = await pool.query(`SELECT id FROM vehicle WHERE vin_number = $1`, [vinNumber]);
+            if (vinCheck.rows.length > 0) {
+                return res.status(400).json({ message: "Vehicle with this VIN number already exists" });
             }
         }
 
-        // Insert vehicle without driver assignment
+        if (engineNumber) {
+            const engCheck = await pool.query(`SELECT id FROM vehicle WHERE engine_number = $1`, [engineNumber]);
+            if (engCheck.rows.length > 0) {
+                return res.status(400).json({ message: "Vehicle with this engine number already exists" });
+            }
+        }
+
         const insertQuery = `
             INSERT INTO vehicle (
                 plate_no, status, user_id, driver_name,
-                vehicle_make, vehicle_model, vehicle_year, color, 
+                vehicle_make, vehicle_model, vehicle_year, color,
                 vin_number, engine_number,
                 vehicle_type, capacity, capacity_unit, fuel_type,
                 purchased_date, purchase_price,
-                registration_date, registration_expiry_date, 
+                registration_date, registration_expiry_date,
                 insurance_expiry_date, fitness_certificate_expiry,
                 insurance_provider, insurance_policy_number,
                 odometer_reading, last_maintenance_date, next_maintenance_due,
-                last_service_odometer, notes
-            ) 
+                last_service_odometer, notes, society_id
+            )
             VALUES (
                 $1, $2, NULL, NULL,
                 $3, $4, $5, $6,
@@ -87,8 +77,8 @@ const addVehicleToInventory = async (req, res) => {
                 $15, $16, $17, $18,
                 $19, $20,
                 $21, $22, $23,
-                $24, $25
-            ) 
+                $24, $25, $26
+            )
             RETURNING *
         `;
 
@@ -102,7 +92,7 @@ const addVehicleToInventory = async (req, res) => {
             insuranceExpiryDate || null, fitnessCertificateExpiry || null,
             insuranceProvider || null, insurancePolicyNumber || null,
             odometerReading || 0, lastMaintenanceDate || null, nextMaintenanceDue || null,
-            lastServiceOdometer || null, notes || null
+            lastServiceOdometer || null, notes || null, societyId || null,
         ]);
         const vehicleData = result.rows[0];
 
@@ -201,7 +191,8 @@ const updateVehicleInventory = async (req, res) => {
             lastMaintenanceDate: 'last_maintenance_date',
             nextMaintenanceDue: 'next_maintenance_due',
             lastServiceOdometer: 'last_service_odometer',
-            notes: 'notes'
+            notes: 'notes',
+            societyId: 'society_id',
         };
 
         const updateFields = [];
@@ -223,18 +214,23 @@ const updateVehicleInventory = async (req, res) => {
             }
         }
 
-        // Check for VIN number duplication
-        if (updateData.vinNumber !== undefined) {
-            const vinCheckQuery = `
-                SELECT id FROM vehicle 
-                WHERE vin_number = $1 AND id != $2
-            `;
-            const vinCheckResult = await pool.query(vinCheckQuery, [updateData.vinNumber, id]);
-
+        if (updateData.vinNumber !== undefined && updateData.vinNumber) {
+            const vinCheckResult = await pool.query(
+                `SELECT id FROM vehicle WHERE vin_number = $1 AND id != $2`,
+                [updateData.vinNumber, id]
+            );
             if (vinCheckResult.rows.length > 0) {
-                return res.status(400).json({
-                    message: "This VIN number is already assigned to another vehicle",
-                });
+                return res.status(400).json({ message: "This VIN number is already assigned to another vehicle" });
+            }
+        }
+
+        if (updateData.engineNumber !== undefined && updateData.engineNumber) {
+            const engCheckResult = await pool.query(
+                `SELECT id FROM vehicle WHERE engine_number = $1 AND id != $2`,
+                [updateData.engineNumber, id]
+            );
+            if (engCheckResult.rows.length > 0) {
+                return res.status(400).json({ message: "This engine number is already assigned to another vehicle" });
             }
         }
 
@@ -242,7 +238,9 @@ const updateVehicleInventory = async (req, res) => {
         for (const [camelKey, snakeKey] of Object.entries(fieldMapping)) {
             if (updateData[camelKey] !== undefined) {
                 updateFields.push(`${snakeKey} = $${paramCounter}`);
-                updateValues.push(updateData[camelKey]);
+                // Convert empty string to null for optional fields
+                const val = updateData[camelKey] === "" ? null : updateData[camelKey];
+                updateValues.push(val);
                 paramCounter++;
             }
         }
@@ -415,21 +413,35 @@ const unblockVehicle = async (req, res) => {
 // Get available vehicles for assignment (used by Admin)
 const getAvailableVehicles = async (req, res) => {
     try {
-        const query = `
-            SELECT 
-                id,
-                plate_no,
-                status,
-                user_id,
-                driver_name
-            FROM vehicle
-            WHERE (user_id IS NULL OR user_id = 0) 
-            AND is_blocked = FALSE
-            AND status != 'blocked'
-            ORDER BY plate_no ASC
-        `;
+        const userRole = req.user.role;
+        const societyId = req.user.society_id;
 
-        const result = await pool.query(query);
+        let query;
+        let params = [];
+
+        if ((userRole === 'admin' || userRole === 'sub_admin') && societyId) {
+            query = `
+                SELECT id, plate_no, status, user_id, driver_name
+                FROM vehicle
+                WHERE (user_id IS NULL OR user_id = 0)
+                AND is_blocked = FALSE
+                AND status != 'blocked'
+                AND society_id = $1
+                ORDER BY plate_no ASC
+            `;
+            params = [societyId];
+        } else {
+            query = `
+                SELECT id, plate_no, status, user_id, driver_name
+                FROM vehicle
+                WHERE (user_id IS NULL OR user_id = 0)
+                AND is_blocked = FALSE
+                AND status != 'blocked'
+                ORDER BY plate_no ASC
+            `;
+        }
+
+        const result = await pool.query(query, params);
 
         res.status(200).json({
             message: "Available vehicles retrieved successfully",
