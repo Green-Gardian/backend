@@ -879,14 +879,8 @@ const updateProfile = async (req, res) => {
     let { first_name, last_name, phone_number, email, profile_picture } =
       req.body;
 
-    if (
-      !first_name ||
-      !last_name ||
-      !phone_number ||
-      !email ||
-      !profile_picture
-    ) {
-      return res.status(400).json({ message: "All fields  are required" });
+    if (!first_name || !last_name || !phone_number || !email) {
+      return res.status(400).json({ message: "first_name, last_name, phone_number and email are required" });
     }
 
     console.log("Checkpoint 1");
@@ -920,17 +914,17 @@ const updateProfile = async (req, res) => {
 
     const updateQuery = await pool.query(
       `
-      UPDATE users 
-      SET first_name = $1, 
-          last_name = $2, 
-          phone_number = $3, 
+      UPDATE users
+      SET first_name = $1,
+          last_name = $2,
+          phone_number = $3,
           email = $4,
-          profile_picture = $5,
+          profile_picture = COALESCE($5, profile_picture),
           updated_at = NOW()
       WHERE id = $6
       RETURNING id, first_name, last_name, username, phone_number, email, profile_picture, role, society_id, is_verified, is_blocked, created_at, updated_at
       `,
-      [first_name, last_name, phone_number, email, profile_picture, userId]
+      [first_name, last_name, phone_number, email, profile_picture || null, userId]
     );
 
     console.log("Checkpoint 4");
