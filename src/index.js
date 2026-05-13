@@ -43,8 +43,38 @@ app.use("/webhooks", express.raw({ type: "application/json" }), webhookRouter);
 // Initialize unified WebSocket service (handles both alerts and chat)
 websocketService.initialize(server);
 
+// CORS Configuration
+const allowedOrigins = [
+  process.env.FRONTEND_URL?.replace(/\/$/, ''), // Remove trailing slash
+  'http://localhost:3000',
+  'http://localhost:8081',
+  'https://greenguardian.gzz.io',
+  'https://frontend-nu-azure-85.vercel.app'
+].filter(Boolean);
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (mobile apps, Postman, etc.)
+    if (!origin) return callback(null, true);
+    
+    // Check if origin is in allowed list
+    if (allowedOrigins.some(allowed => origin.startsWith(allowed))) {
+      return callback(null, true);
+    }
+    
+    // Allow all origins in development
+    if (process.env.NODE_ENV !== 'production') {
+      return callback(null, true);
+    }
+    
+    callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
 // Middleware
-app.use(cors());
 app.use(morgan("dev"));
 app.use(express.json());
 

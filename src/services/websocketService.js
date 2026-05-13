@@ -13,15 +13,43 @@ class WebSocketService {
      * Initialize WebSocket server
      */
     initialize(server) {
+        // Configure allowed origins
+        const allowedOrigins = [
+            process.env.FRONTEND_URL?.replace(/\/$/, ''), // Remove trailing slash
+            'http://localhost:3000',
+            'http://localhost:8081',
+            'https://greenguardian.gzz.io',
+            'https://frontend-nu-azure-85.vercel.app'
+        ].filter(Boolean); // Remove undefined values
+
         this.io = new Server(server, {
             cors: {
-                origin: "*", // Allow all origins for mobile development
-                methods: ["GET", "POST"]
-            }
+                origin: (origin, callback) => {
+                    // Allow requests with no origin (mobile apps, Postman, etc.)
+                    if (!origin) return callback(null, true);
+                    
+                    // Check if origin is in allowed list
+                    if (allowedOrigins.some(allowed => origin.startsWith(allowed))) {
+                        return callback(null, true);
+                    }
+                    
+                    // Allow all origins in development
+                    if (process.env.NODE_ENV !== 'production') {
+                        return callback(null, true);
+                    }
+                    
+                    callback(new Error('Not allowed by CORS'));
+                },
+                methods: ["GET", "POST"],
+                credentials: true,
+                allowedHeaders: ["Authorization", "Content-Type"]
+            },
+            transports: ['websocket', 'polling'],
+            allowEIO3: true
         });
 
         this.setupEventHandlers();
-        console.log('WebSocket server initialized');
+        console.log('WebSocket server initialized with CORS origins:', allowedOrigins);
     }
 
     /**
