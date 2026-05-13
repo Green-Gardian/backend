@@ -12,3 +12,4 @@ router.put('/:id', binController.updateBin);
 router.delete('/:id', binController.removeBin);
 
 module.exports = router;
+

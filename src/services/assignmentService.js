@@ -148,12 +148,43 @@ async function assignTask(taskId, assignedBy = null, wsService = null) {
   const binLat = task.latitude || 0;
   const binLon = task.longitude || 0;
 
-  // Always attempt assignment via Groq AI first (no heuristic fallback)
+  // Always attempt assignment via Groq AI first, then fall back to deterministic heuristic selection.
   let best = null;
   try {
     best = await findBestDriverAI(task.society_id, binLat, binLon, task.fill_level);
   } catch (e) {
     console.error("AI assignment failed:", e);
+  }
+
+  if (!best) {
+    try {
+      best = await findBestDriver(task.society_id, binLat, binLon);
+    } catch (e) {
+      console.error("Heuristic assignment failed:", e);
+    }
+  }
+
+  if (!best) {
+    try {
+      const fallbackDrivers = await getCandidateDrivers(task.society_id);
+      if (fallbackDrivers && fallbackDrivers.length > 0) {
+        const driver = fallbackDrivers[0];
+        best = {
+          driver: {
+            ...driver,
+            latitude: binLat,
+            longitude: binLon,
+          },
+          distance: 0,
+          workload: await getActiveTaskCount(driver.id),
+          score: 0,
+          reason: 'Fallback driver selection',
+          isAI: false,
+        };
+      }
+    } catch (e) {
+      console.error("Fallback driver selection failed:", e);
+    }
   }
 
   if (!best) {
