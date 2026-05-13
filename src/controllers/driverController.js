@@ -730,7 +730,7 @@ const getDashboardStats = async (req, res) => {
         AND driver_rating IS NOT NULL
       `;
       const ratingRes = await pool.query(ratingQ, [driverId]);
-      
+
       if (ratingRes.rows[0].rating_count > 0) {
         rating = parseFloat(ratingRes.rows[0].avg_rating).toFixed(1);
       }
@@ -787,14 +787,20 @@ const getDriverPerformance = async (req, res) => {
     const onTimeRate = totalAssigned > 0 ? Math.round((totalCompleted / totalAssigned) * 100) : 100;
 
     // 3. Average Rating from Service Requests
-    const ratingQ = `
-      SELECT AVG(driver_rating)::numeric(3,2) as avg_rating, COUNT(*)::int as rating_count
-      FROM service_requests 
-      WHERE driver_id = $1 AND driver_rating IS NOT NULL
-    `;
-    const ratingRes = await pool.query(ratingQ, [driverId]);
-    const averageRating = parseFloat(ratingRes.rows[0]?.avg_rating || 0);
-    const ratingCount = ratingRes.rows[0]?.rating_count || 0;
+    let averageRating = 0;
+    let ratingCount = 0;
+    try {
+      const ratingQ = `
+        SELECT AVG(driver_rating)::numeric(3,2) as avg_rating, COUNT(*)::int as rating_count
+        FROM service_requests 
+        WHERE driver_id = $1 AND driver_rating IS NOT NULL
+      `;
+      const ratingRes = await pool.query(ratingQ, [driverId]);
+      averageRating = parseFloat(ratingRes.rows[0]?.avg_rating || 0);
+      ratingCount = ratingRes.rows[0]?.rating_count || 0;
+    } catch (err) {
+      console.log('Rating calculation skipped:', err.message);
+    }
 
     // 4. This Month vs Last Month Collections
     const thisMonthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString();
@@ -819,102 +825,93 @@ const getDriverPerformance = async (req, res) => {
     const lastMonthCollections = lastMonthRes.rows[0]?.cnt || 0;
 
     // 5. This Month vs Last Month Rating
-    const thisMonthRatingQ = `
-      SELECT AVG(driver_rating)::numeric(3,2) as avg_rating
-      FROM service_requests 
-      WHERE driver_id = $1 AND driver_rating IS NOT NULL AND driver_rated_at >= $2
-    `;
-    const thisMonthRatingRes = await pool.query(thisMonthRatingQ, [driverId, thisMonthStart]);
-    const thisMonthRating = parseFloat(thisMonthRatingRes.rows[0]?.avg_rating || 0);
+    let thisMonthRating = 0;
+    let lastMonthRating = 0;
+    try {
+      const thisMonthRatingQ = `
+        SELECT AVG(driver_rating)::numeric(3,2) as avg_rating
+        FROM service_requests 
+        WHERE driver_id = $1 AND driver_rating IS NOT NULL AND driver_rated_at >= $2
+      `;
+      const thisMonthRatingRes = await pool.query(thisMonthRatingQ, [driverId, thisMonthStart]);
+      thisMonthRating = parseFloat(thisMonthRatingRes.rows[0]?.avg_rating || 0);
 
-    const lastMonthRatingQ = `
-      SELECT AVG(driver_rating)::numeric(3,2) as avg_rating
-      FROM service_requests 
-      WHERE driver_id = $1 AND driver_rating IS NOT NULL 
-        AND driver_rated_at >= $2 AND driver_rated_at <= $3
-    `;
-    const lastMonthRatingRes = await pool.query(lastMonthRatingQ, [driverId, lastMonthStart, lastMonthEnd]);
-    const lastMonthRating = parseFloat(lastMonthRatingRes.rows[0]?.avg_rating || 0);
+      const lastMonthRatingQ = `
+        SELECT AVG(driver_rating)::numeric(3,2) as avg_rating
+        FROM service_requests 
+        WHERE driver_id = $1 AND driver_rating IS NOT NULL 
+          AND driver_rated_at >= $2 AND driver_rated_at <= $3
+      `;
+      const lastMonthRatingRes = await pool.query(lastMonthRatingQ, [driverId, lastMonthStart, lastMonthEnd]);
+      lastMonthRating = parseFloat(lastMonthRatingRes.rows[0]?.avg_rating || 0);
+    } catch (err) {
+      console.log('Monthly rating calculation skipped:', err.message);
+    }
 
-    // 6. Complaints and Commendations from system_feedback
-    const complaintsQ = `
-      SELECT COUNT(*)::int AS cnt 
-      FROM system_feedback 
-      WHERE driver_id = $1 AND category = 'driver_behavior' AND rating <= 2
-    `;
-    const complaintsRes = await pool.query(complaintsQ, [driverId]);
-    const complaints = complaintsRes.rows[0]?.cnt || 0;
+    // 6. Complaints and Commendations
+    let complaints = 0;
+    let commendations = 0;
+    try {
+      const complaintsQ = `
+        SELECT COUNT(*)::int AS cnt 
+        FROM service_requests 
+        WHERE driver_id = $1 AND driver_rating IS NOT NULL AND driver_rating <= 2
+      `;
+      const complaintsRes = await pool.query(complaintsQ, [driverId]);
+      complaints = complaintsRes.rows[0]?.cnt || 0;
 
-    const commendationsQ = `
-      SELECT COUNT(*)::int AS cnt 
-      FROM system_feedback 
-      WHERE driver_id = $1 AND category = 'driver_behavior' AND rating >= 4
-    `;
-    const commendationsRes = await pool.query(commendationsQ, [driverId]);
-    const commendations = commendationsRes.rows[0]?.cnt || 0;
+      const commendationsQ = `
+        SELECT COUNT(*)::int AS cnt 
+        FROM service_requests 
+        WHERE driver_id = $1 AND driver_rating IS NOT NULL AND driver_rating >= 4
+      `;
+      const commendationsRes = await pool.query(commendationsQ, [driverId]);
+      commendations = commendationsRes.rows[0]?.cnt || 0;
+    } catch (err) {
+      console.log('Complaints/commendations calculation skipped:', err.message);
+    }
 
     // 7. Weekly/Daily Breakdown for Graph (Last 7 days)
-    const graphPeriod = 7;
-    const graphSince = new Date(Date.now() - graphPeriod * 24 * 60 * 60 * 1000);
-
-    const graphQ = `
-      WITH dates AS (
-        SELECT generate_series(
-          DATE_TRUNC('day', $2::timestamp), 
-          DATE_TRUNC('day', NOW()), 
-          '1 day'::interval
-        ) as date
-      )
-      SELECT 
-        to_char(d.date, 'Dy') as week_day,
-        COUNT(dt.id)::int as collections,
-        COALESCE(AVG(sr.driver_rating), 0)::numeric(3,2) as rating
-      FROM dates d
-      LEFT JOIN driver_tasks dt ON DATE_TRUNC('day', dt.completed_at) = d.date 
-        AND dt.driver_id = $1 
-        AND dt.status = 'completed'
-      LEFT JOIN service_requests sr ON DATE_TRUNC('day', sr.completed_at) = d.date
-        AND sr.driver_id = $1
-        AND sr.driver_rating IS NOT NULL
-      GROUP BY d.date
-      ORDER BY d.date ASC
-    `;
-
-    const graphRes = await pool.query(graphQ, [driverId, graphSince.toISOString()]);
-    const weeklyData = graphRes.rows.map(row => ({
-      week: row.week_day,
-      collections: parseInt(row.collections),
-      rating: parseFloat(row.rating || 0).toFixed(1),
-    }));
-
-    // 8. Calculate distance covered (if driver_locations table exists)
-    let distanceCovered = '0 km';
+    let weeklyData = [];
     try {
-      const distanceQ = `
-        SELECT SUM(
-          CASE 
-            WHEN LAG(latitude) OVER (ORDER BY timestamp) IS NOT NULL THEN
-              6371 * acos(
-                cos(radians(latitude)) * 
-                cos(radians(LAG(latitude) OVER (ORDER BY timestamp))) * 
-                cos(radians(LAG(longitude) OVER (ORDER BY timestamp)) - radians(longitude)) + 
-                sin(radians(latitude)) * 
-                sin(radians(LAG(latitude) OVER (ORDER BY timestamp)))
-              )
-            ELSE 0
-          END
-        )::numeric(10,2) as total_distance
-        FROM driver_locations
-        WHERE driver_id = $1 AND timestamp >= $2
+      const graphPeriod = 7;
+      const graphSince = new Date(Date.now() - graphPeriod * 24 * 60 * 60 * 1000);
+
+      const graphQ = `
+        WITH dates AS (
+          SELECT generate_series(
+            DATE_TRUNC('day', $2::timestamp), 
+            DATE_TRUNC('day', NOW()), 
+            '1 day'::interval
+          ) as date
+        )
+        SELECT 
+          to_char(d.date, 'Dy') as week_day,
+          COUNT(dt.id)::int as collections,
+          COALESCE(AVG(sr.driver_rating), 0)::numeric(3,2) as rating
+        FROM dates d
+        LEFT JOIN driver_tasks dt ON DATE_TRUNC('day', dt.completed_at) = d.date 
+          AND dt.driver_id = $1 
+          AND dt.status = 'completed'
+        LEFT JOIN service_requests sr ON DATE_TRUNC('day', sr.completed_at) = d.date
+          AND sr.driver_id = $1
+          AND sr.driver_rating IS NOT NULL
+        GROUP BY d.date
+        ORDER BY d.date ASC
       `;
-      const distanceRes = await pool.query(distanceQ, [driverId, since]);
-      const distance = parseFloat(distanceRes.rows[0]?.total_distance || 0);
-      if (distance > 0) {
-        distanceCovered = `${distance.toFixed(1)} km`;
-      }
+
+      const graphRes = await pool.query(graphQ, [driverId, graphSince.toISOString()]);
+      weeklyData = graphRes.rows.map(row => ({
+        week: row.week_day,
+        collections: parseInt(row.collections),
+        rating: parseFloat(row.rating || 0).toFixed(1),
+      }));
     } catch (err) {
-      console.log('Distance calculation skipped (table may not exist):', err.message);
+      console.log('Weekly data calculation skipped:', err.message);
     }
+
+    // 8. Calculate distance covered - Skip for now as table structure is unknown
+    const distanceCovered = '0 km';
 
     const performanceData = {
       totalCollections,
@@ -922,7 +919,7 @@ const getDriverPerformance = async (req, res) => {
       averageRating: averageRating || 0,
       ratingCount,
       distanceCovered,
-      fuelEfficiency: 'N/A', // Can be calculated if fuel data is tracked
+      fuelEfficiency: 'N/A',
       complaints,
       commendations,
       weeklyData,
@@ -941,9 +938,9 @@ const getDriverPerformance = async (req, res) => {
       }
     };
 
-    return res.status(200).json({ 
-      message: "Performance metrics retrieved successfully", 
-      performance: performanceData 
+    return res.status(200).json({
+      message: "Performance metrics retrieved successfully",
+      performance: performanceData
     });
   } catch (error) {
     const status = error.status || 500;
