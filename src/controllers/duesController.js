@@ -231,17 +231,27 @@ const createDueCheckoutSession = async (req, res) => {
       stripeCustomerId = customer.id;
     }
 
-    // Keep Stripe placeholder unencoded so Stripe can replace it with actual checkout session id.
-    const successUrl = `${returnUrl}${returnUrl.includes("?") ? "&" : "?"}payment=success&session_id={CHECKOUT_SESSION_ID}`;
-    const cancelUrl = appendParams(returnUrl, {
-      payment: "cancelled",
-    });
+    // Stripe requires http/https success_url and cancel_url.
+    // Mobile deep links (exp://, mobile://, etc.) are not accepted directly.
+    // When the returnUrl is a custom scheme, proxy through a backend redirect endpoint.
+    let stripeSuccessUrl, stripeCancelUrl;
+    if (/^https?:\/\//i.test(returnUrl)) {
+      stripeSuccessUrl = `${returnUrl}${returnUrl.includes("?") ? "&" : "?"}payment=success&session_id={CHECKOUT_SESSION_ID}`;
+      stripeCancelUrl = appendParams(returnUrl, { payment: "cancelled" });
+    } else {
+      const backendBase = (
+        process.env.BACKEND_PUBLIC_URL || `${req.protocol}://${req.get("host")}`
+      ).replace(/\/$/, "");
+      const encodedReturn = encodeURIComponent(returnUrl);
+      stripeSuccessUrl = `${backendBase}/payment/redirect?return_url=${encodedReturn}&payment=success&session_id={CHECKOUT_SESSION_ID}`;
+      stripeCancelUrl = `${backendBase}/payment/redirect?return_url=${encodedReturn}&payment=cancelled`;
+    }
 
     const checkoutSession = await stripe.checkout.sessions.create({
       mode: "payment",
       customer: stripeCustomerId,
-      success_url: successUrl,
-      cancel_url: cancelUrl,
+      success_url: stripeSuccessUrl,
+      cancel_url: stripeCancelUrl,
       payment_method_types: ["card"],
       line_items: [
         {

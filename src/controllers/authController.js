@@ -585,6 +585,7 @@ const signIn = async (req, res) => {
             "Login successful. Please set up MFA to continue using the system.",
           access_token: tokens.access_token,
           refresh_token: tokens.refresh_token,
+          user_id: user.id,
           username: user.username,
           is_verified: user.is_verified,
           role: user.role,
@@ -634,6 +635,7 @@ const signIn = async (req, res) => {
       message: "User logged in successfully",
       access_token: tokens.access_token,
       refresh_token: tokens.refresh_token,
+      user_id: user.id,
       username: user.username,
       is_verified: user.is_verified,
       role: user.role,
@@ -679,6 +681,8 @@ const sendVerificationEmail = async (
   verificationToken
 ) => {
   try {
+    const verificationLink = `${process.env.FRONTEND_URL}/verify-email?token=${verificationToken}`;
+    console.log(`Verification link for ${recipientEmail}: ${verificationLink}`);
     await emailService.sendVerificationEmail(
       recipientUsername,
       recipientEmail,
@@ -1151,6 +1155,7 @@ const sendPasswordResetEmail = async (
   resetToken
 ) => {
   try {
+    console.log(`Password reset token for ${recipientEmail}: ${resetToken}`);
     await emailService.sendPasswordResetEmail(
       recipientUsername,
       recipientEmail,

@@ -106,7 +106,7 @@ class WebSocketService {
         try {
             const { userId, societyId, role } = data;
 
-            if (!userId || !societyId) {
+            if (!userId) {
                 socket.emit('auth-error', { message: 'Invalid authentication data' });
                 return;
             }
@@ -114,7 +114,7 @@ class WebSocketService {
             // Store user connection info
             this.connectedUsers.set(socket.id, {
                 userId: parseInt(userId),
-                societyId: parseInt(societyId),
+                societyId: societyId ? parseInt(societyId) : null,
                 role,
                 socketId: socket.id
             });
@@ -125,14 +125,18 @@ class WebSocketService {
             }
             this.userSockets.get(userId).add(socket.id);
 
-            // Join society room for society-wide notifications
-            socket.join(`society_${societyId}`);
+            // Join society room only when societyId is available
+            if (societyId) {
+                socket.join(`society_${societyId}`);
+            }
 
             // Join user-specific room for personal notifications
             socket.join(`user_${userId}`);
 
             // Join role-specific room
-            socket.join(`role_${role}`);
+            if (role) {
+                socket.join(`role_${role}`);
+            }
 
             socket.emit('authenticated', {
                 message: 'Successfully authenticated',
@@ -326,6 +330,44 @@ class WebSocketService {
             return true;
         } catch (error) {
             console.error('Error sending task assignment to driver:', error);
+            return false;
+        }
+    }
+
+    /**
+     * Send a service request assignment to a driver
+     */
+    sendServiceRequestToDriver(driverId, data) {
+        try {
+            const payload = {
+                ...data,
+                type: 'service_request',
+                timestamp: new Date().toISOString()
+            };
+            this.sendToUser(driverId, 'service-request:assigned', payload);
+            console.log(`✅ Service request assignment notification sent to driver ${driverId}`);
+            return true;
+        } catch (error) {
+            console.error('Error sending service request assignment to driver:', error);
+            return false;
+        }
+    }
+
+    /**
+     * Send service request assignment confirmation to the resident (user who requested the service)
+     */
+    sendServiceRequestAssignedToResident(residentId, data) {
+        try {
+            const payload = {
+                ...data,
+                type: 'service_request_assigned',
+                timestamp: new Date().toISOString()
+            };
+            this.sendToUser(residentId, 'service-request:driver-assigned', payload);
+            console.log(`✅ Service request driver assignment notification sent to resident ${residentId}`);
+            return true;
+        } catch (error) {
+            console.error('Error sending service request assignment to resident:', error);
             return false;
         }
     }

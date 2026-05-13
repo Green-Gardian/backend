@@ -29,6 +29,7 @@ const systemFeedbackRouter = require("./routes/systemFeedbackRoutes");
 const sentimentAnalyticsRouter = require("./routes/sentimentAnalyticsRoutes");
 const binRouter = require("./routes/binRoutes");
 const binSimulator = require("./services/binSimulator");
+const mockRouter = require("./routes/mockRoutes");
 const webhookRouter = require("./routes/webhookRoutes");
 const duesSchedulerService = require("./services/duesSchedulerService");
 
@@ -73,9 +74,54 @@ const logRouter = require("./routes/logRoutes");
 
 // Bins routes (requires authentication)
 app.use("/bins", verifyToken, binRouter);
+
+// Mock routes — no auth, for development/testing only
+app.use("/mock", mockRouter);
 app.use("/tasks", verifyToken, taskRouter);
 app.use("/logs", verifyToken, logRouter);
 
+
+// Mobile payment redirect — called by the user's browser after Stripe checkout.
+// Bounces from an http:// URL back to the app's deep link.
+app.get("/payment/redirect", (req, res) => {
+  const { return_url, payment, session_id } = req.query;
+
+  if (!return_url) {
+    return res.status(400).send("Missing return_url");
+  }
+
+  let deepLink;
+  try {
+    deepLink = decodeURIComponent(return_url);
+  } catch {
+    return res.status(400).send("Invalid return_url");
+  }
+
+  const sep = deepLink.includes("?") ? "&" : "?";
+  deepLink += `${sep}payment=${encodeURIComponent(payment || "unknown")}`;
+  if (session_id) {
+    deepLink += `&session_id=${encodeURIComponent(session_id)}`;
+  }
+
+  const safeLink = deepLink
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+
+  res.send(`<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Redirecting...</title>
+</head>
+<body>
+<script>window.location.replace(${JSON.stringify(deepLink)});</script>
+<meta http-equiv="refresh" content="0;url=${safeLink}">
+<noscript><p><a href="${safeLink}">Return to app</a></p></noscript>
+</body>
+</html>`);
+});
 
 // Health endpoints
 app.get("/health", (req, res) => {

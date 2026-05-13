@@ -190,13 +190,34 @@ async function assignTask(taskId, assignedBy = null, wsService = null) {
   const evQ = `INSERT INTO task_events (task_id, event_type, payload, created_by) VALUES ($1, 'assigned', $2, $3)`;
   await pool.query(evQ, [taskId, JSON.stringify(payload), assignedBy]);
 
+  // Send WebSocket notification to driver about task assignment
   if (wsService) {
     wsService.sendTaskAssignmentToDriver(best.driver.id, {
       id: taskId,
       bin_name: task.bin_name,
       priority: task.priority,
-      fill_level: task.fill_level
+      fill_level: task.fill_level,
+      bin_id: task.bin_id,
+      latitude: task.latitude,
+      longitude: task.longitude,
+      timestamp: new Date().toISOString()
     });
+    console.log(`📲 Driver Notification: Task #${taskId} assigned to driver ${best.driver.id}`);
+
+    // Also notify the resident (task creator) that their task has been assigned
+    if (task.created_by) {
+      wsService.sendToUser(task.created_by, 'task:driver-assigned', {
+        id: taskId,
+        bin_name: task.bin_name,
+        priority: task.priority,
+        fill_level: task.fill_level,
+        driver_name: `${best.driver.first_name} ${best.driver.last_name}`,
+        driver_id: best.driver.id,
+        driver_phone: best.driver.phone_number,
+        timestamp: new Date().toISOString()
+      });
+      console.log(`📲 Resident Notification: Task #${taskId} assigned - Driver: ${best.driver.first_name} ${best.driver.last_name}`);
+    }
   }
 
   // Create Chat between Resident and Driver
@@ -414,8 +435,27 @@ async function assignServiceRequest(serviceRequestId, websocketService = null) {
       id: serviceRequestId,
       title: request.title,
       preferred_date: request.preferred_date,
-      preferred_time_slot: request.preferred_time_slot
+      preferred_time_slot: request.preferred_time_slot,
+      driver_name: `${best.driver.first_name} ${best.driver.last_name}`,
+      driver_id: best.driver.id,
+      driver_phone: best.driver.phone_number
     });
+    console.log(`📲 Driver Notification: Service request #${serviceRequestId} assigned to driver ${best.driver.id}`);
+  }
+
+  // Send WebSocket notification to resident (service request creator)
+  if (websocketService && websocketService.sendServiceRequestAssignedToResident) {
+    websocketService.sendServiceRequestAssignedToResident(request.user_id, {
+      id: serviceRequestId,
+      title: request.title,
+      preferred_date: request.preferred_date,
+      preferred_time_slot: request.preferred_time_slot,
+      driver_name: `${best.driver.first_name} ${best.driver.last_name}`,
+      driver_id: best.driver.id,
+      driver_phone: best.driver.phone_number,
+      status: 'assigned'
+    });
+    console.log(`📲 Resident Notification: Driver assigned to service request #${serviceRequestId}`);
   }
 
   return {
