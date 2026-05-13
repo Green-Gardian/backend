@@ -432,12 +432,27 @@ async function assignServiceRequest(serviceRequestId, websocketService = null) {
   // Send WebSocket notification to driver
   if (websocketService && websocketService.sendServiceRequestToDriver) {
     websocketService.sendServiceRequestToDriver(best.driver.id, {
+      serviceRequestId: serviceRequestId,
       id: serviceRequestId,
       title: request.title,
+      preferredDate: request.preferred_date,
       preferred_date: request.preferred_date,
+      preferredTimeSlot: request.preferred_time_slot,
       preferred_time_slot: request.preferred_time_slot,
+      location: {
+        lat: pickupLat,
+        lng: pickupLon,
+        latitude: pickupLat,
+        longitude: pickupLon
+      },
+      estimatedWeight: 0,
+      priority: 'normal',
+      serviceType: 'Service Request',
+      driverName: `${best.driver.first_name} ${best.driver.last_name}`,
       driver_name: `${best.driver.first_name} ${best.driver.last_name}`,
+      driverId: best.driver.id,
       driver_id: best.driver.id,
+      driverPhone: best.driver.phone_number,
       driver_phone: best.driver.phone_number
     });
     console.log(`📲 Driver Notification: Service request #${serviceRequestId} assigned to driver ${best.driver.id}`);

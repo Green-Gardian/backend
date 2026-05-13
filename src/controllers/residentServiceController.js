@@ -129,6 +129,79 @@ const addUserProfile = async (req, res) => {
   }
 };
 
+/**
+ * Rate Driver for Service Request
+ * Allows residents to rate the driver after service completion
+ */
+const rateDriver = async (req, res) => {
+  const userId = req.user.id;
+  const requestId = toPosInt(req.params.requestId, null);
+  const { rating, comment } = req.body;
+
+  if (requestId === null) {
+    return res.status(400).json({ success: false, message: "Invalid request id" });
+  }
+  
+  if (!rating || rating < 1 || rating > 5) {
+    return res.status(400).json({ 
+      success: false, 
+      message: "Rating is required and must be between 1-5" 
+    });
+  }
+
+  try {
+    // Verify request exists, belongs to user, is completed, and has a driver
+    const check = await run(
+      `SELECT sr.id, sr.driver_id, sr.driver_rating
+       FROM service_requests sr 
+       WHERE sr.id = $1 AND sr.user_id = $2 AND sr.status = 'completed'`,
+      [requestId, userId]
+    );
+
+    if (check.rows.length === 0) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "Service request not found, not completed, or not yours" 
+      });
+    }
+
+    const serviceRequest = check.rows[0];
+    
+    if (!serviceRequest.driver_id) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "No driver assigned to this service request" 
+      });
+    }
+
+    // Update the driver rating
+    const updateQ = await run(
+      `UPDATE service_requests 
+       SET driver_rating = $1, 
+           driver_rating_comment = $2,
+           driver_rated_at = CURRENT_TIMESTAMP
+       WHERE id = $3
+       RETURNING id, driver_rating, driver_rating_comment, driver_rated_at`,
+      [rating, comment || null, requestId]
+    );
+
+    console.log(`✅ Driver rated ${rating}/5 for service request #${requestId} by user ${userId}`);
+
+    return res.status(200).json({
+      success: true,
+      message: "Driver rating submitted successfully",
+      data: updateQ.rows[0]
+    });
+
+  } catch (error) {
+    console.error("Error rating driver:", error);
+    return res.status(500).json({ 
+      success: false, 
+      message: "Failed to submit driver rating" 
+    });
+  }
+};
+
 module.exports = { addUserProfile };
 
 
@@ -968,6 +1041,7 @@ module.exports = {
   // Feedback
   submitFeedback,
   getFeedback,
+  rateDriver,
 
   // Messages
   getRequestMessages,

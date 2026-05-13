@@ -13,15 +13,43 @@ class WebSocketService {
      * Initialize WebSocket server
      */
     initialize(server) {
+        // Configure allowed origins
+        const allowedOrigins = [
+            process.env.FRONTEND_URL?.replace(/\/$/, ''), // Remove trailing slash
+            'http://localhost:3000',
+            'http://localhost:8081',
+            'https://greenguardian.gzz.io',
+            'https://frontend-nu-azure-85.vercel.app'
+        ].filter(Boolean); // Remove undefined values
+
         this.io = new Server(server, {
             cors: {
-                origin: "*", // Allow all origins for mobile development
-                methods: ["GET", "POST"]
-            }
+                origin: (origin, callback) => {
+                    // Allow requests with no origin (mobile apps, Postman, etc.)
+                    if (!origin) return callback(null, true);
+
+                    // Check if origin is in allowed list
+                    if (allowedOrigins.some(allowed => origin.startsWith(allowed))) {
+                        return callback(null, true);
+                    }
+
+                    // Allow all origins in development
+                    if (process.env.NODE_ENV !== 'production') {
+                        return callback(null, true);
+                    }
+
+                    callback(new Error('Not allowed by CORS'));
+                },
+                methods: ["GET", "POST"],
+                credentials: true,
+                allowedHeaders: ["Authorization", "Content-Type"]
+            },
+            transports: ['websocket', 'polling'],
+            allowEIO3: true
         });
 
         this.setupEventHandlers();
-        console.log('WebSocket server initialized');
+        console.log('WebSocket server initialized with CORS origins:', allowedOrigins);
     }
 
     /**
@@ -169,6 +197,12 @@ class WebSocketService {
         try {
             const { userId, societyId, role } = data;
 
+            console.log(`\n🔐 Authentication request received:`);
+            console.log(`   User ID: ${userId} (type: ${typeof userId})`);
+            console.log(`   Society ID: ${societyId}`);
+            console.log(`   Role: ${role}`);
+            console.log(`   Socket ID: ${socket.id}`);
+
             if (!userId) {
                 socket.emit('auth-error', { message: 'Invalid authentication data' });
                 return;
@@ -183,35 +217,41 @@ class WebSocketService {
             });
 
             // Add socket to user's socket set
-            if (!this.userSockets.has(userId)) {
-                this.userSockets.set(userId, new Set());
+            const userIdKey = parseInt(userId);
+            if (!this.userSockets.has(userIdKey)) {
+                this.userSockets.set(userIdKey, new Set());
             }
-            this.userSockets.get(userId).add(socket.id);
+            this.userSockets.get(userIdKey).add(socket.id);
 
             // Join society room only when societyId is available
             if (societyId) {
                 socket.join(`society_${societyId}`);
+                console.log(`   ✅ Joined society room: society_${societyId}`);
             }
 
             // Join user-specific room for personal notifications
-            socket.join(`user_${userId}`);
+            socket.join(`user_${userIdKey}`);
+            console.log(`   ✅ Joined user room: user_${userIdKey}`);
 
             // Join role-specific room
             if (role) {
                 socket.join(`role_${role}`);
+                console.log(`   ✅ Joined role room: role_${role}`);
             }
 
             socket.emit('authenticated', {
                 message: 'Successfully authenticated',
-                userId,
+                userId: userIdKey,
                 societyId,
                 role
             });
 
-            console.log(`User ${userId} authenticated on socket ${socket.id}`);
+            console.log(`✅ User ${userIdKey} authenticated successfully on socket ${socket.id}`);
+            console.log(`📊 Total connected users: ${this.userSockets.size}`);
+            console.log(`📊 User ${userIdKey} has ${this.userSockets.get(userIdKey)?.size || 0} active socket(s)\n`);
 
         } catch (error) {
-            console.error('Authentication error:', error);
+            console.error('❌ Authentication error:', error);
             socket.emit('auth-error', { message: 'Authentication failed' });
         }
     }
@@ -407,11 +447,26 @@ class WebSocketService {
                 type: 'service_request',
                 timestamp: new Date().toISOString()
             };
-            this.sendToUser(driverId, 'service-request:assigned', payload);
-            console.log(`✅ Service request assignment notification sent to driver ${driverId}`);
-            return true;
+
+            console.log(`\n🔔 Attempting to send service request to driver ${driverId}`);
+            console.log(`📊 Connected users map size: ${this.userSockets.size}`);
+            console.log(`📊 User sockets for driver ${driverId}:`, this.userSockets.get(driverId));
+            console.log(`📊 User sockets for driver "${driverId}":`, this.userSockets.get(String(driverId)));
+            console.log(`📊 User sockets for driver ${Number(driverId)}:`, this.userSockets.get(Number(driverId)));
+            console.log(`📦 Payload:`, JSON.stringify(payload, null, 2));
+
+            const sent = this.sendToUser(driverId, 'service-request:assigned', payload);
+
+            if (sent) {
+                console.log(`✅ Service request assignment notification sent to driver ${driverId}`);
+            } else {
+                console.log(`⚠️ Driver ${driverId} not connected or no active sockets found`);
+                console.log(`📋 All connected users:`, Array.from(this.userSockets.keys()));
+            }
+
+            return sent;
         } catch (error) {
-            console.error('Error sending service request assignment to driver:', error);
+            console.error('❌ Error sending service request assignment to driver:', error);
             return false;
         }
     }
