@@ -10,6 +10,7 @@ const QRCode = require("qrcode");
 const { generateTokens } = require("../utils/generateToken");
 const { hashPassword, comparePassword } = require("../utils/hashPassword");
 const { logSubAdminActivity } = require("../services/subAdminLogger");
+const websocketService = require("../services/websocketService");
 
 // Generate OTP function
 const generateOTP = () => {
@@ -1690,6 +1691,17 @@ const blockUser = async (req, res) => {
         activityType: "BLOCK_USER",
         description: `Sub Admin ${req.user.id} ${isBlocked ? 'blocked' : 'unblocked'} user with email: ${result.rows[0].email} at ${Date.now()}`,
       });
+    }
+
+    // Force-logout the blocked user's active sessions in real-time
+    if (isBlocked) {
+      try {
+        websocketService.sendToUser(userId, 'force-logout', {
+          reason: 'Your account has been blocked by an administrator.',
+        });
+      } catch (e) {
+        console.error('Failed to send force-logout to user:', e.message);
+      }
     }
 
     return res.status(200).json({

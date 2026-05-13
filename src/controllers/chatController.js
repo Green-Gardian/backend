@@ -32,20 +32,40 @@ exports.getChatGroup = async (req, res) => {
   try {
     let result;
 
+    // Gets profile picture of the resident/driver participant (not admin staff)
+    const nonAdminPictureLateral = `
+      LEFT JOIN LATERAL (
+        SELECT us.profile_picture
+        FROM unnest(c.chatparticipants) AS p(pid)
+        JOIN users us ON us.id::text = p.pid::text
+        WHERE us.role IN ('resident', 'driver')
+        LIMIT 1
+      ) op ON true
+    `;
+
     if (role === "super_admin") {
       result = await pool.query(
-        `SELECT * FROM chat ORDER BY updated_at DESC`
+        `SELECT c.*, op.profile_picture AS participant_profile_picture
+         FROM chat c
+         ${nonAdminPictureLateral}
+         ORDER BY c.updated_at DESC`
       );
     } else if (role === "admin" || role === "sub_admin") {
       result = await pool.query(
-        `SELECT * FROM chat WHERE society_id = $1 ORDER BY updated_at DESC`,
+        `SELECT c.*, op.profile_picture AS participant_profile_picture
+         FROM chat c
+         ${nonAdminPictureLateral}
+         WHERE c.society_id = $1
+         ORDER BY c.updated_at DESC`,
         [societyId]
       );
     } else {
       result = await pool.query(
-        `SELECT * FROM chat
-         WHERE chatparticipants @> $1
-         ORDER BY updated_at DESC`,
+        `SELECT c.*, op.profile_picture AS participant_profile_picture
+         FROM chat c
+         ${nonAdminPictureLateral}
+         WHERE c.chatparticipants @> $1
+         ORDER BY c.updated_at DESC`,
         [[userId]]
       );
     }

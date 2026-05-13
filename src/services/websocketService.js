@@ -651,9 +651,9 @@ class WebSocketService {
             // Optional: Leave other rooms if they start with 'chat_' (if we named them that way, but we use UUIDs)
             // Implementation: Just join.
 
-            socket.join(chatId);
-            socket.join(chatId);
-            console.log(`User ${userId} joined room ${chatId}. Socket rooms:`, socket.rooms);
+            const roomId = String(chatId);
+            socket.join(roomId);
+            console.log(`User ${userId} joined room ${roomId}. Socket rooms:`, socket.rooms);
         } catch (error) {
             console.error('Join room error:', error);
             socket.emit('error', { message: 'Failed to join room' });
@@ -673,7 +673,8 @@ class WebSocketService {
                 return;
             }
 
-            const { chatId, content } = data;
+            const { chatId: rawChatId, content } = data;
+            const chatId = String(rawChatId); // normalize to string — matches joinRoom
             const senderId = socket.user.id;
             const sender_name = socket.user.username;
 
