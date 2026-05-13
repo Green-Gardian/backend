@@ -3,7 +3,13 @@ const { pool } = require("../config/db");
 const sentimentService = require("../services/sentimentAnalysisService");
 const assignmentService = require("../services/assignmentService");
 const websocketService = require("../services/websocketService");
-const { ensureCurrentDueRecord, getMonthlyDuesAmount } = require("../services/duesService");
+const {
+  ensureCurrentDueRecord,
+  getMonthlyDuesAmount,
+  getNextBillingMonthStart,
+  getDueDateForMonth,
+  toIsoDate,
+} = require("../services/duesService");
 
 
 /** Parse positive int safely; returns fallback for invalid input. */
@@ -515,11 +521,11 @@ const createServiceRequest = async (req, res) => {
       [q.rows[0].id, userId]
     );
 
-    // Add RS200 service request fee to resident dues payments
+    // Add RS200 service request fee as a separate unpaid dues row
     const serviceRequestId = q.rows[0].id;
-    const billingMonthDate = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1));
-    const billingMonth = billingMonthDate.toISOString().slice(0, 10);
-    const dueDate = new Date(Date.UTC(billingMonthDate.getUTCFullYear(), billingMonthDate.getUTCMonth(), 7)).toISOString().slice(0, 10);
+    const billingMonthDate = getNextBillingMonthStart(new Date());
+    const billingMonth = toIsoDate(billingMonthDate);
+    const dueDate = toIsoDate(getDueDateForMonth(billingMonthDate));
     
     try {
       const serviceFeeCents = 20000; // RS200 in cents
@@ -528,16 +534,20 @@ const createServiceRequest = async (req, res) => {
       await run(
         `
           INSERT INTO resident_dues_payments 
-            (user_id, society_id, billing_month, due_date, amount_cents, currency, status, metadata)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-          ON CONFLICT (user_id, billing_month) DO UPDATE SET 
-            amount_cents = resident_dues_payments.amount_cents + $5,
-            metadata = jsonb_set(
-              COALESCE(resident_dues_payments.metadata, '{}'::jsonb),
-              '{service_requests}',
-              COALESCE(resident_dues_payments.metadata->'service_requests', '[]'::jsonb) || jsonb_build_array($9)
-            ),
-            updated_at = CURRENT_TIMESTAMP
+            (
+              user_id,
+              society_id,
+              billing_month,
+              due_date,
+              amount_cents,
+              currency,
+              status,
+              due_type,
+              service_request_id,
+              metadata
+            )
+          VALUES ($1, $2, $3, $4, $5, $6, 'pending', 'service_request', $7, $8)
+          ON CONFLICT DO NOTHING
         `,
         [
           userId,
@@ -546,9 +556,12 @@ const createServiceRequest = async (req, res) => {
           dueDate,
           serviceFeeCents,
           currency,
-          'due',
-          JSON.stringify({ service_requests: [serviceRequestId], reason: 'Service request fee' }),
-          serviceRequestId
+          serviceRequestId,
+          JSON.stringify({
+            reason: 'Service request fee',
+            source: 'service_request',
+            service_request_id: serviceRequestId,
+          }),
         ]
       );
       console.log(`✅ RS200 service fee added to dues for Service Request #${serviceRequestId}`);
@@ -1061,21 +1074,31 @@ const getResidentPendingDues = async (req, res) => {
   const userId = req.user.id;
   
   try {
-    // Get all pending/overdue dues for the resident
+    // Get all pending/overdue dues for the resident.
+    // Monthly dues are skipped for users in their account-creation month.
     const duesResult = await run(
       `
         SELECT 
-          id,
-          billing_month,
-          due_date,
-          amount_cents,
-          currency,
-          status,
-          created_at,
-          metadata,
-          paid_at
-        FROM resident_dues_payments
-        WHERE user_id = $1 AND status IN ('pending', 'overdue')
+          rdp.id,
+          rdp.billing_month,
+          rdp.due_date,
+          rdp.amount_cents,
+          rdp.currency,
+          rdp.status,
+          rdp.created_at,
+          rdp.metadata,
+          rdp.paid_at,
+          rdp.due_type,
+          rdp.service_request_id,
+          u.created_at AS user_created_at
+        FROM resident_dues_payments rdp
+        JOIN users u ON u.id = rdp.user_id
+        WHERE rdp.user_id = $1
+          AND rdp.status IN ('pending', 'overdue')
+          AND (
+            rdp.due_type <> 'monthly'
+            OR rdp.billing_month > date_trunc('month', u.created_at)::date
+          )
         ORDER BY due_date DESC
       `,
       [userId]
@@ -1091,8 +1114,10 @@ const getResidentPendingDues = async (req, res) => {
       createdAt: row.created_at,
       paidAt: row.paid_at,
       metadata: row.metadata,
-      isServiceRequestFee: row.metadata?.service_requests?.length > 0 || false,
-      serviceRequests: row.metadata?.service_requests || []
+      dueType: row.due_type || 'monthly',
+      isServiceRequestFee: row.due_type === 'service_request',
+      serviceRequestId: row.service_request_id || row.metadata?.service_request_id || null,
+      serviceRequests: row.metadata?.service_requests || (row.service_request_id ? [row.service_request_id] : []),
     }));
 
     // Calculate totals

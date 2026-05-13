@@ -31,6 +31,7 @@ class DuesSchedulerService {
           amount_cents,
           currency,
           status,
+          due_type,
           metadata
         )
         SELECT
@@ -41,6 +42,7 @@ class DuesSchedulerService {
           $3::int,
           $4::text,
           'pending',
+          'monthly',
           jsonb_build_object(
             'createdByScheduler', true,
             'createdAt', CURRENT_TIMESTAMP
@@ -49,7 +51,14 @@ class DuesSchedulerService {
         WHERE u.role = 'resident'
           AND COALESCE(u.is_verified, true) = true
           AND COALESCE(u.is_blocked, false) = false
-        ON CONFLICT (user_id, billing_month) DO NOTHING
+          AND u.created_at < $1::date
+          AND NOT EXISTS (
+            SELECT 1
+            FROM resident_dues_payments rdp
+            WHERE rdp.user_id = u.id
+              AND rdp.billing_month = $1::date
+              AND rdp.due_type = 'monthly'
+          )
         RETURNING id
       `,
       [

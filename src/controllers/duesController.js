@@ -90,6 +90,10 @@ const getSocietyIdForRequester = async (requester) => {
 };
 
 const mapDueForClient = (dueState) => {
+  if (!dueState?.due) {
+    return null;
+  }
+
   const due = dueState.due;
   return {
     id: due.id,
@@ -117,6 +121,15 @@ const getMyDueStatus = async (req, res) => {
   try {
     const societyId = await getSocietyIdForRequester(req.user);
     const dueState = await ensureCurrentDueRecord(pool, req.user.id, societyId, new Date());
+
+    if (dueState.noDueForCurrentMonth) {
+      return res.status(200).json({
+        success: true,
+        monthlyAmount: getMonthlyDuesAmount(),
+        dueStatus: null,
+        message: "No dues are generated in your signup month. Billing starts from next month.",
+      });
+    }
 
     return res.status(200).json({
       success: true,
@@ -195,6 +208,11 @@ const createDueCheckoutSession = async (req, res) => {
     const stripe = getStripeClient();
     const societyId = await getSocietyIdForRequester(req.user);
     const dueState = await ensureCurrentDueRecord(pool, req.user.id, societyId, new Date());
+
+    if (dueState.noDueForCurrentMonth || !dueState.due) {
+      return fail(res, 400, "No monthly dues are generated in your signup month.");
+    }
+
     const due = dueState.due;
 
     if (due.status === "paid") {
@@ -354,7 +372,7 @@ const verifyDueCheckoutSession = async (req, res) => {
       paymentStatus,
       dueStatus: mapDueForClient(dueState),
       message:
-        dueState.due.status === "paid"
+        dueState?.due?.status === "paid"
           ? "Payment verified successfully. Special collection access is restored."
           : "Payment is not completed yet.",
     });
