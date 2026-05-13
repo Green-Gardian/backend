@@ -711,44 +711,24 @@ const getDashboardStats = async (req, res) => {
     const totalRes = await pool.query(totalQ, [driverId]);
     const totalCollections = totalRes.rows[0].count;
 
-    // Get average rating from system_feedback (if applicable) or service_feedback if it existed
-    // Since we only have system_feedback table from migration, we'll try to use that if it links to driver,
-    // but the schema showed user_id is the submitter. 
-    // Assuming for now we don't have direct driver ratings in system_feedback linked to a specific driver target.
-    // However, if there was a `service_feedback` table as mentioned in prompt, I should check that.
-    // The user mentioned "cumulative ratings of respective driver from service_feedback".
-    // I will check if service_feedback table exists, otherwise default to a calculated metric or placeholder if table missing.
-    // Based on file list, I don't see service_feedback migration, but I see system_feedback.
-    // Let's assume there might be a table or we perform a query on task_events or similar if needed.
-    // User specifically asked for "service_feedback". I'll try to query it safely.
-
-    let rating = 5.0; // Default
+    // Get average rating from service_requests
+    let rating = 5.0; // Default rating if no ratings exist
     try {
-      // Attempt to query service_feedback if it exists
-      // If the table doesn't exist, this will throw, and we catch it.
       const ratingQ = `
-            SELECT AVG(rating) as avg_rating
-            FROM service_feedback
-            WHERE driver_id = $1
-        `;
-      // const ratingRes = await pool.query(ratingQ, [driverId]); 
-      // rating = ratingRes.rows[0].avg_rating ? parseFloat(ratingRes.rows[0].avg_rating).toFixed(1) : 5.0;
-
-      // Since I haven't seen service_feedback migration, I'll stick to a placeholder 
-      // or look for a rating in users table if it was added there.
-      // The user said "take cumulative ratings of respective driver from service_feedback".
-      // I will assume the table exists or will be created. 
-      // For safety in this step, I'll comment out the SQL that might fail and return a static value 
-      // until I can verify the table exists, OR I can try to see if 'users' table has a rating column.
-      // Looking at getDrivers query, it selects * from users.
-
-      // Let's check if there is a 'rating' column in users table or if we should use system_feedback.
-      // For now, I will use a dummy query that I can easily replace or uncomment.
-
-      // Placeholder for now as I didn't see service_feedback table definition.
-      rating = 4.8;
+        SELECT COALESCE(AVG(driver_rating), 5.0) as avg_rating,
+               COUNT(driver_rating) as rating_count
+        FROM service_requests
+        WHERE driver_id = $1
+        AND driver_rating IS NOT NULL
+      `;
+      const ratingRes = await pool.query(ratingQ, [driverId]);
+      
+      if (ratingRes.rows[0].rating_count > 0) {
+        rating = parseFloat(ratingRes.rows[0].avg_rating).toFixed(1);
+      }
     } catch (e) {
-      console.log('Error fetching rating', e);
+      console.log('Error fetching driver rating:', e.message);
+      // Keep default rating of 5.0
     }
 
     return res.status(200).json({
