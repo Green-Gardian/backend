@@ -671,23 +671,42 @@ const getDashboardStats = async (req, res) => {
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
 
-    // Get today's collections (completed tasks)
+    // Get today's collections (completed tasks from both driver_tasks AND service_requests)
     const todayQ = `
-      SELECT COUNT(*)::int as count 
-      FROM driver_tasks 
-      WHERE driver_id = $1 
-      AND status = 'completed' 
-      AND completed_at >= $2
+      SELECT 
+        (
+          SELECT COUNT(*)::int 
+          FROM driver_tasks 
+          WHERE driver_id = $1 
+          AND status = 'completed' 
+          AND completed_at >= $2
+        ) + 
+        (
+          SELECT COUNT(*)::int 
+          FROM service_requests 
+          WHERE driver_id = $1 
+          AND status = 'completed' 
+          AND completed_at >= $2
+        ) as count
     `;
     const todayRes = await pool.query(todayQ, [driverId, startOfToday.toISOString()]);
     const todayCollections = todayRes.rows[0].count;
 
-    // Get total collections
+    // Get total collections (from both tables)
     const totalQ = `
-      SELECT COUNT(*)::int as count 
-      FROM driver_tasks 
-      WHERE driver_id = $1 
-      AND status = 'completed'
+      SELECT 
+        (
+          SELECT COUNT(*)::int 
+          FROM driver_tasks 
+          WHERE driver_id = $1 
+          AND status = 'completed'
+        ) + 
+        (
+          SELECT COUNT(*)::int 
+          FROM service_requests 
+          WHERE driver_id = $1 
+          AND status = 'completed'
+        ) as count
     `;
     const totalRes = await pool.query(totalQ, [driverId]);
     const totalCollections = totalRes.rows[0].count;
