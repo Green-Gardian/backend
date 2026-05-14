@@ -8,7 +8,7 @@ const {
 } = require("../services/duesService");
 
 const STRIPE_CURRENCY = (process.env.STRIPE_CURRENCY || "pkr").toLowerCase();
-const DEFAULT_RETURN_URL = process.env.MOBILE_BILLING_RETURN_URL || "mobile://billing-return";
+const DEFAULT_RETURN_URL = process.env.MOBILE_BILLING_RETURN_URL || "greenguardian:///";
 
 const getStripeWebhookSecret = () => process.env.STRIPE_WEBHOOK_SECRET || "";
 
