@@ -509,8 +509,9 @@ const getAdminOverview = async (req, res) => {
          COALESCE(SUM(rdp.amount_cents) FILTER (WHERE rdp.due_type = 'service_request' AND rdp.status IN ('pending','overdue')), 0) AS service_fees_outstanding_cents,
          COALESCE(SUM(rdp.amount_cents) FILTER (WHERE rdp.due_type = 'service_request' AND rdp.status = 'paid'), 0) AS service_fees_collected_cents
        FROM service_requests sr
+       JOIN users u ON sr.user_id = u.id
        LEFT JOIN resident_dues_payments rdp ON rdp.service_request_id = sr.id
-       WHERE ($1::int IS NULL OR sr.society_id = $1)
+       WHERE ($1::int IS NULL OR u.society_id = $1)
          AND DATE_TRUNC('month', sr.created_at) = DATE_TRUNC('month', $2::date)`,
       [scopeSocietyId, monthStart]
     );
