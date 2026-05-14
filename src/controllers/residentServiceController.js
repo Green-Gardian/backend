@@ -521,14 +521,25 @@ const createServiceRequest = async (req, res) => {
       [q.rows[0].id, userId]
     );
 
-    // Add RS200 service request fee as a separate unpaid dues row
+    // Add service request fee based on selected service type's base_price (min Rs.500)
     const serviceRequestId = q.rows[0].id;
     const billingMonthDate = getNextBillingMonthStart(new Date());
     const billingMonth = toIsoDate(billingMonthDate);
     const dueDate = toIsoDate(getDueDateForMonth(billingMonthDate));
-    
+
     try {
-      const serviceFeeCents = 20000; // RS200 in cents
+      // Fetch base_price from service_types; use category fallback if null
+      const stQ = await run(`SELECT base_price, category FROM service_types WHERE id = $1`, [serviceTypeId]);
+      const st = stQ.rows[0];
+      const CATEGORY_PRICES = {
+        general: 500, organic: 550, construction: 800, electronic: 700,
+        hazardous: 900, bulk: 650, recyclable: 500, medical: 1000,
+      };
+      const basePrice = st?.base_price
+        ? parseFloat(st.base_price)
+        : (CATEGORY_PRICES[st?.category?.toLowerCase()] || 500);
+      const feeAmount = Math.max(500, Math.round(basePrice / 50) * 50); // round to nearest 50
+      const serviceFeeCents = Math.round(feeAmount * 100);
       const currency = process.env.STRIPE_CURRENCY || "pkr";
       
       await run(
@@ -564,7 +575,7 @@ const createServiceRequest = async (req, res) => {
           }),
         ]
       );
-      console.log(`✅ RS200 service fee added to dues for Service Request #${serviceRequestId}`);
+      console.log(`✅ Rs.${feeAmount} service fee added to dues for Service Request #${serviceRequestId}`);
     } catch (feeErr) {
       console.error(`⚠️ Failed to add service fee for Service Request #${serviceRequestId}:`, feeErr);
       // Continue - fees failure should not block service request creation
