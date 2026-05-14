@@ -374,10 +374,12 @@ async function assignServiceRequest(serviceRequestId, websocketService = null) {
   // Fetch service request details
   const srQ = `
     SELECT sr.id, sr.user_id, sr.title, sr.preferred_date, sr.preferred_time_slot, sr.status,
-           ua.latitude, ua.longitude, u.society_id
+           ua.latitude, ua.longitude, u.society_id,
+           st.name AS service_type_name
     FROM service_requests sr
     LEFT JOIN user_addresses ua ON sr.address_id = ua.id
     LEFT JOIN users u ON sr.user_id = u.id
+    LEFT JOIN service_types st ON sr.service_type_id = st.id
     WHERE sr.id = $1
   `;
   const srRes = await pool.query(srQ, [serviceRequestId]);
@@ -459,6 +461,28 @@ async function assignServiceRequest(serviceRequestId, websocketService = null) {
     best.driver.id,
     `Auto-assigned to driver ${best.driver.first_name} ${best.driver.last_name} via ${best.isAI ? 'AI optimization' : 'heuristic algorithm'}`
   ]);
+
+  // Create chat between driver and resident for this service request
+  try {
+    const ChatService = require('./chatService');
+    const serviceType = request.service_type_name || request.service_category || 'Service';
+    const chatTitle = `${serviceType} — ${best.driver.first_name} ${best.driver.last_name}`;
+    const chat = await ChatService.createChat(
+      societyId,
+      [request.user_id, best.driver.id],
+      chatTitle
+    );
+    console.log(`💬 Chat #${chat.id} created between resident ${request.user_id} and driver ${best.driver.id} for service request #${serviceRequestId}`);
+
+    // Notify both parties about the new chat via WebSocket
+    if (websocketService) {
+      const chatPayload = { chatId: chat.id, chatTitle, serviceRequestId };
+      websocketService.sendToUser(request.user_id, 'chat:created', chatPayload);
+      websocketService.sendToUser(best.driver.id, 'chat:created', chatPayload);
+    }
+  } catch (chatErr) {
+    console.error(`⚠️ Failed to create chat for service request #${serviceRequestId}:`, chatErr.message);
+  }
 
   // Send WebSocket notification to driver
   if (websocketService && websocketService.sendServiceRequestToDriver) {
