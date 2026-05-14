@@ -1023,13 +1023,9 @@ const getDashboardStats = async (req, res) => {
       [userId]
     );
 
-    // 2. Get user rating (average of overall_rating from feedback they've given)
-    const rating = await run(
-      `
-        SELECT AVG(overall_rating)::DECIMAL(2,1) as avg_rating
-        FROM service_feedback
-        WHERE user_id = $1
-      `,
+    // 2. Get cancelled requests count
+    const cancelled = await run(
+      `SELECT COUNT(*)::int as cancelled FROM service_requests WHERE user_id = $1 AND status = 'cancelled'`,
       [userId]
     );
 
@@ -1057,7 +1053,7 @@ const getDashboardStats = async (req, res) => {
         totalRequests: parseInt(counts.rows[0].total) || 0,
         activeRequests: parseInt(counts.rows[0].active) || 0,
         completedRequests: parseInt(counts.rows[0].completed) || 0,
-        userRating: rating.rows[0].avg_rating || "5.0", // Default to 5.0 if no feedback yet
+        cancelledRequests: cancelled.rows[0].cancelled || 0,
       },
       upcomingCollection: upcoming.rows[0] || null
     });

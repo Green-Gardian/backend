@@ -51,13 +51,15 @@ exports.getChatGroup = async (req, res) => {
          ORDER BY c.updated_at DESC`
       );
     } else if (role === "admin" || role === "sub_admin") {
+      // Only show chats where admin is a participant (not driver↔resident chats)
       result = await pool.query(
         `SELECT c.*, op.profile_picture AS participant_profile_picture
          FROM chat c
          ${nonAdminPictureLateral}
          WHERE c.society_id = $1
+           AND c.chatparticipants @> ARRAY[$2::text]
          ORDER BY c.updated_at DESC`,
-        [societyId]
+        [societyId, userId]
       );
     } else {
       result = await pool.query(

@@ -112,7 +112,7 @@ const getDriverSentiment = async (req, res) => {
 
 const getDriverRankings = async (req, res) => {
     try {
-        const { startDate, endDate, minFeedback = 5 } = req.query;
+        const { startDate, endDate, minFeedback = 1 } = req.query;
 
         let dateFilter = '';
         const params = [minFeedback];
@@ -135,12 +135,12 @@ const getDriverRankings = async (req, res) => {
         SUM(CASE WHEN sf.sentiment_label IN ('negative', 'very_negative') THEN 1 ELSE 0 END) as negative_feedback
       FROM users u
       INNER JOIN service_feedback sf ON u.id = sf.driver_id
-      WHERE u.role = 'driver' 
-        AND sf.sentiment_score IS NOT NULL
+      WHERE u.role = 'driver'
+        AND sf.overall_rating IS NOT NULL
         ${dateFilter}
       GROUP BY u.id, u.first_name, u.last_name, u.email
       HAVING COUNT(sf.id) >= $1
-      ORDER BY avg_sentiment_score DESC
+      ORDER BY avg_rating DESC NULLS LAST, avg_sentiment_score DESC NULLS LAST
     `;
 
         const result = await pool.query(query, params);
