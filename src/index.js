@@ -175,7 +175,7 @@ app.get("/websocket/stats", verifyToken, (req, res) => {
 });
 
 // Start server
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
   console.log(`Server is running on PORT:${PORT}`);
   // start bin simulator
   try {
@@ -188,5 +188,45 @@ server.listen(PORT, () => {
     duesSchedulerService.start();
   } catch (err) {
     console.error("Failed to start dues scheduler", err);
+  }
+
+  // Backfill missing sentiment analysis for existing feedback on startup
+  try {
+    const sentimentController = require('./controllers/sentimentAnalyticsController');
+    const { pool } = require('./config/db');
+    const sentimentService = require('./services/sentimentAnalysisService');
+    const unanalyzed = await pool.query(
+      `SELECT id, overall_rating, timeliness_rating, professionalism_rating,
+              cleanliness_rating, comments, suggestions
+       FROM service_feedback
+       WHERE sentiment_label IS NULL OR sentiment_score IS NULL`
+    );
+    if (unanalyzed.rows.length > 0) {
+      console.log(`[sentiment-backfill] Found ${unanalyzed.rows.length} unanalyzed feedback records. Running backfill...`);
+      let updated = 0;
+      for (const row of unanalyzed.rows) {
+        try {
+          const analysis = await sentimentService.analyzeFeedback(
+            row.comments || null, row.suggestions || null,
+            { overall_rating: row.overall_rating, timeliness_rating: row.timeliness_rating,
+              professionalism_rating: row.professionalism_rating, cleanliness_rating: row.cleanliness_rating }
+          );
+          await pool.query(
+            `UPDATE service_feedback SET sentiment_score=$1, sentiment_label=$2, key_themes=$3,
+             requires_urgent_attention=$4, sentiment_summary=$5, updated_at=CURRENT_TIMESTAMP WHERE id=$6`,
+            [analysis.sentiment_score, analysis.sentiment_label, JSON.stringify(analysis.key_themes || []),
+             analysis.requires_urgent_attention, analysis.summary || null, row.id]
+          );
+          updated++;
+        } catch (err) {
+          console.error(`[sentiment-backfill] Failed for feedback #${row.id}:`, err.message);
+        }
+      }
+      console.log(`[sentiment-backfill] Done. Updated ${updated}/${unanalyzed.rows.length} records.`);
+    } else {
+      console.log('[sentiment-backfill] All feedback already analyzed.');
+    }
+  } catch (err) {
+    console.error('[sentiment-backfill] Startup backfill error:', err.message);
   }
 });

@@ -1,6 +1,7 @@
 const { pool } = require("../config/db");
 const sentimentService = require("../services/sentimentAnalysisService");
 
+
 const getSentimentOverview = async (req, res) => {
     try {
         const { startDate, endDate } = req.query;
@@ -154,8 +155,8 @@ const getDriverRankings = async (req, res) => {
             },
             stats: {
                 total_feedback: parseInt(row.total_feedback, 10),
-                avg_sentiment_score: parseFloat(row.avg_sentiment_score).toFixed(2),
-                avg_rating: parseFloat(row.avg_rating).toFixed(2),
+                avg_sentiment_score: row.avg_sentiment_score != null ? parseFloat(row.avg_sentiment_score).toFixed(2) : null,
+                avg_rating: row.avg_rating != null ? parseFloat(row.avg_rating).toFixed(2) : null,
                 positive_feedback: parseInt(row.positive_feedback, 10),
                 negative_feedback: parseInt(row.negative_feedback, 10)
             }
@@ -295,6 +296,64 @@ const respondToFeedback = async (req, res) => {
     }
 };
 
+const backfillSentiment = async (req, res) => {
+    try {
+        const unanalyzed = await pool.query(
+            `SELECT id, overall_rating, timeliness_rating, professionalism_rating,
+                    cleanliness_rating, comments, suggestions
+             FROM service_feedback
+             WHERE sentiment_label IS NULL OR sentiment_score IS NULL`
+        );
+
+        const rows = unanalyzed.rows;
+        if (rows.length === 0) {
+            return res.status(200).json({ success: true, message: 'All feedback already analyzed.', updated: 0 });
+        }
+
+        let updated = 0;
+        for (const row of rows) {
+            try {
+                const analysis = await sentimentService.analyzeFeedback(
+                    row.comments || null,
+                    row.suggestions || null,
+                    {
+                        overall_rating: row.overall_rating,
+                        timeliness_rating: row.timeliness_rating,
+                        professionalism_rating: row.professionalism_rating,
+                        cleanliness_rating: row.cleanliness_rating,
+                    }
+                );
+                await pool.query(
+                    `UPDATE service_feedback
+                     SET sentiment_score = $1,
+                         sentiment_label = $2,
+                         key_themes = $3,
+                         requires_urgent_attention = $4,
+                         sentiment_summary = $5,
+                         updated_at = CURRENT_TIMESTAMP
+                     WHERE id = $6`,
+                    [
+                        analysis.sentiment_score,
+                        analysis.sentiment_label,
+                        JSON.stringify(analysis.key_themes || []),
+                        analysis.requires_urgent_attention,
+                        analysis.summary || null,
+                        row.id,
+                    ]
+                );
+                updated++;
+            } catch (err) {
+                console.error(`Backfill failed for feedback #${row.id}:`, err.message);
+            }
+        }
+
+        return res.status(200).json({ success: true, message: `Backfilled ${updated} of ${rows.length} feedback records.`, updated, total: rows.length });
+    } catch (error) {
+        console.error('Backfill sentiment error:', error);
+        return res.status(500).json({ success: false, message: 'Backfill failed', error: error.message });
+    }
+};
+
 const getSentimentByServiceType = async (req, res) => {
     try {
         const query = `
@@ -338,5 +397,6 @@ module.exports = {
     getSentimentTrends,
     getUrgentFeedback,
     respondToFeedback,
-    getSentimentByServiceType
+    getSentimentByServiceType,
+    backfillSentiment
 };

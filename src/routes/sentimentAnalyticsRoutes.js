@@ -7,7 +7,8 @@ const {
     getSentimentTrends,
     getUrgentFeedback,
     respondToFeedback,
-    getSentimentByServiceType
+    getSentimentByServiceType,
+    backfillSentiment
 } = require('../controllers/sentimentAnalyticsController');
 
 const requireAdmin = (req, res, next) => {
@@ -36,5 +37,6 @@ router.get('/drivers/:driverId', requireAdmin, getDriverSentiment);
 router.get('/urgent', requireAdmin, getUrgentFeedback);
 router.get('/service-types', requireAdmin, getSentimentByServiceType);
 router.post('/feedback/:feedbackId/respond', requireAdmin, respondToFeedback);
+router.post('/backfill', requireAdmin, backfillSentiment);
 
 module.exports = router;

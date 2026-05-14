@@ -879,9 +879,47 @@ const submitFeedback = async (req, res) => {
       ]
     );
 
+    const feedbackRow = q.rows[0];
+
+    // Run sentiment analysis asynchronously so response isn't delayed
+    setImmediate(async () => {
+      try {
+        const analysis = await sentimentService.analyzeFeedback(
+          comments || null,
+          suggestions || null,
+          {
+            overall_rating: overallRating,
+            timeliness_rating: timelinessRating || null,
+            professionalism_rating: professionalismRating || null,
+            cleanliness_rating: cleanlinessRating || null,
+          }
+        );
+        await run(
+          `UPDATE service_feedback
+           SET sentiment_score = $1,
+               sentiment_label = $2,
+               key_themes = $3,
+               requires_urgent_attention = $4,
+               sentiment_summary = $5,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = $6`,
+          [
+            analysis.sentiment_score,
+            analysis.sentiment_label,
+            JSON.stringify(analysis.key_themes || []),
+            analysis.requires_urgent_attention,
+            analysis.summary || null,
+            feedbackRow.id,
+          ]
+        );
+      } catch (sentimentErr) {
+        console.error(`Sentiment analysis failed for feedback #${feedbackRow.id}:`, sentimentErr.message);
+      }
+    });
+
     return res
       .status(200)
-      .json({ success: true, message: "Feedback submitted successfully", feedback: q.rows[0] });
+      .json({ success: true, message: "Feedback submitted successfully", feedback: feedbackRow });
   } catch (error) {
     return fail500(res, "Submit feedback error", error);
   }

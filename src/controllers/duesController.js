@@ -4,6 +4,8 @@ const {
   ensureCurrentDueRecord,
   getMonthlyDuesAmount,
   getBillingMonthStart,
+  getNextBillingMonthStart,
+  getDueDateForMonth,
   toIsoDate,
 } = require("../services/duesService");
 
@@ -352,6 +354,16 @@ const verifyDueCheckoutSession = async (req, res) => {
       return fail(res, 404, "Due payment record not found for this session.");
     }
 
+    // If session is still open, user cancelled without paying — leave dues unchanged
+    if (session.status === "open") {
+      return res.status(200).json({
+        success: true,
+        paymentStatus: "unpaid",
+        duesUpdated: 0,
+        message: "Payment was cancelled. Dues remain unchanged.",
+      });
+    }
+
     const paymentIntent = session.payment_intent;
     const latestCharge = paymentIntent?.latest_charge || null;
     const paymentMethod = latestCharge?.payment_method_details?.type || session.payment_method_types?.[0] || "card";
@@ -556,14 +568,21 @@ const getAdminRecords = async (req, res) => {
   try {
     const scopeSocietyId = role === "super_admin" ? null : await getSocietyIdForRequester(req.user);
     const month = req.query.month || null;
-    const status = req.query.status || null;
+    const statusParam = req.query.status || null;
     const search = (req.query.search || "").trim().toLowerCase();
 
-    const filters = [scopeSocietyId, month ? `${month}-01` : null, status, search ? `%${search}%` : null, limit, offset];
+    // 'outstanding' is a virtual status meaning pending + overdue across all months
+    const isOutstanding = statusParam === "outstanding";
+    const effectiveMonth = isOutstanding ? null : (month ? `${month}-01` : null);
 
-    const recordsQ = await pool.query(
-      `
-        SELECT
+    const params = [scopeSocietyId, effectiveMonth, search ? `%${search}%` : null, limit, offset];
+    const statusClause = isOutstanding
+      ? `AND rdp.status IN ('pending', 'overdue')`
+      : statusParam
+        ? `AND rdp.status = '${statusParam.replace(/'/g, "''")}'`
+        : "";
+
+    const selectCols = `
           rdp.id,
           rdp.user_id,
           rdp.society_id,
@@ -580,6 +599,7 @@ const getAdminRecords = async (req, res) => {
           rdp.updated_at,
           rdp.due_type,
           rdp.service_request_id,
+          rdp.notes,
           u.first_name,
           u.last_name,
           u.email,
@@ -587,42 +607,35 @@ const getAdminRecords = async (req, res) => {
           ua.apartment_unit,
           ua.street_address,
           ua.city,
-          s.society_name AS society_name
+          s.society_name AS society_name`;
+
+    const baseWhere = `
+        WHERE ($1::int IS NULL OR rdp.society_id = $1)
+          AND ($2::date IS NULL OR rdp.billing_month = $2)
+          ${statusClause}
+          AND (
+            $3::text IS NULL OR
+            LOWER(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')) LIKE $3 OR
+            LOWER(COALESCE(u.email, '')) LIKE $3 OR
+            LOWER(COALESCE(u.phone_number, '')) LIKE $3
+          )`;
+
+    const joins = `
         FROM resident_dues_payments rdp
         JOIN users u ON u.id = rdp.user_id
         LEFT JOIN user_addresses ua ON ua.user_id = u.id AND ua.is_default = true AND ua.is_active = true
-        LEFT JOIN societies s ON s.id = rdp.society_id
-        WHERE ($1::int IS NULL OR rdp.society_id = $1)
-          AND ($2::date IS NULL OR rdp.billing_month = $2)
-          AND ($3::text IS NULL OR rdp.status = $3)
-          AND (
-            $4::text IS NULL OR
-            LOWER(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')) LIKE $4 OR
-            LOWER(COALESCE(u.email, '')) LIKE $4 OR
-            LOWER(COALESCE(u.phone_number, '')) LIKE $4
-          )
+        LEFT JOIN societies s ON s.id = rdp.society_id`;
+
+    const recordsQ = await pool.query(
+      `SELECT ${selectCols} ${joins} ${baseWhere}
         ORDER BY rdp.billing_month DESC, rdp.updated_at DESC
-        LIMIT $5 OFFSET $6
-      `,
-      filters
+        LIMIT $4 OFFSET $5`,
+      params
     );
 
     const countQ = await pool.query(
-      `
-        SELECT COUNT(*) AS total
-        FROM resident_dues_payments rdp
-        JOIN users u ON u.id = rdp.user_id
-        WHERE ($1::int IS NULL OR rdp.society_id = $1)
-          AND ($2::date IS NULL OR rdp.billing_month = $2)
-          AND ($3::text IS NULL OR rdp.status = $3)
-          AND (
-            $4::text IS NULL OR
-            LOWER(COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')) LIKE $4 OR
-            LOWER(COALESCE(u.email, '')) LIKE $4 OR
-            LOWER(COALESCE(u.phone_number, '')) LIKE $4
-          )
-      `,
-      [scopeSocietyId, month ? `${month}-01` : null, status, search ? `%${search}%` : null]
+      `SELECT COUNT(*) AS total ${joins} ${baseWhere}`,
+      [scopeSocietyId, effectiveMonth, search ? `%${search}%` : null]
     );
 
     return res.status(200).json({
@@ -652,6 +665,8 @@ const getAdminRecords = async (req, res) => {
         dueType: row.due_type || 'monthly',
         serviceRequestId: row.service_request_id || null,
         isServiceFee: row.due_type === 'service_request',
+        isAdjustment: row.due_type === 'adjustment',
+        notes: row.notes || null,
       })),
       pagination: {
         page,
@@ -711,6 +726,9 @@ const getResidentHistoryForAdmin = async (req, res) => {
           stripe_checkout_session_id,
           stripe_payment_intent_id,
           receipt_url,
+          due_type,
+          service_request_id,
+          notes,
           created_at,
           updated_at
         FROM resident_dues_payments
@@ -741,6 +759,11 @@ const getResidentHistoryForAdmin = async (req, res) => {
         stripeCheckoutSessionId: row.stripe_checkout_session_id,
         stripePaymentIntentId: row.stripe_payment_intent_id,
         receiptUrl: row.receipt_url,
+        dueType: row.due_type || 'monthly',
+        serviceRequestId: row.service_request_id || null,
+        isServiceFee: row.due_type === 'service_request',
+        isAdjustment: row.due_type === 'adjustment',
+        notes: row.notes || null,
         createdAt: row.created_at,
         updatedAt: row.updated_at,
       })),
@@ -748,6 +771,209 @@ const getResidentHistoryForAdmin = async (req, res) => {
   } catch (error) {
     console.error("Get resident history for admin error:", error);
     return fail(res, 500, "Failed to fetch resident payment history");
+  }
+};
+
+const getOutstandingBreakdown = async (req, res) => {
+  const role = req.user.role;
+  if (!["admin", "sub_admin", "super_admin"].includes(role)) {
+    return fail(res, 403, "Access denied. Admin role required.");
+  }
+
+  try {
+    const scopeSocietyId = role === "super_admin" ? null : await getSocietyIdForRequester(req.user);
+
+    const rows = await pool.query(
+      `SELECT
+         rdp.id,
+         rdp.user_id,
+         rdp.amount_cents,
+         rdp.currency,
+         rdp.status,
+         rdp.due_type,
+         rdp.billing_month,
+         rdp.due_date,
+         rdp.service_request_id,
+         rdp.notes,
+         u.first_name,
+         u.last_name,
+         u.email,
+         ua.apartment_unit,
+         ua.street_address
+       FROM resident_dues_payments rdp
+       JOIN users u ON u.id = rdp.user_id
+       LEFT JOIN user_addresses ua ON ua.user_id = u.id AND ua.is_default = true AND ua.is_active = true
+       WHERE rdp.status IN ('pending', 'overdue')
+         AND ($1::int IS NULL OR rdp.society_id = $1)
+       ORDER BY u.id, rdp.billing_month ASC`,
+      [scopeSocietyId]
+    );
+
+    // Group by resident
+    const byResident = {};
+    for (const r of rows.rows) {
+      if (!byResident[r.user_id]) {
+        byResident[r.user_id] = {
+          userId: r.user_id,
+          name: [r.first_name, r.last_name].filter(Boolean).join(" "),
+          email: r.email,
+          houseNumber: r.apartment_unit || r.street_address || "-",
+          totalCents: 0,
+          currency: r.currency,
+          dues: [],
+        };
+      }
+      byResident[r.user_id].totalCents += Number(r.amount_cents);
+      byResident[r.user_id].dues.push({
+        id: r.id,
+        billingMonth: r.billing_month,
+        dueDate: r.due_date,
+        amount: r.amount_cents / 100,
+        amountCents: Number(r.amount_cents),
+        status: r.status,
+        dueType: r.due_type || "monthly",
+        isServiceFee: r.due_type === "service_request",
+        isAdjustment: r.due_type === "adjustment",
+        serviceRequestId: r.service_request_id || null,
+        notes: r.notes || null,
+      });
+    }
+
+    const residents = Object.values(byResident).map((r) => ({
+      ...r,
+      total: r.totalCents / 100,
+    }));
+
+    return res.status(200).json({ success: true, residents });
+  } catch (error) {
+    console.error("Get outstanding breakdown error:", error);
+    return fail(res, 500, "Failed to fetch outstanding breakdown.");
+  }
+};
+
+const adminAdjustBalance = async (req, res) => {
+  const role = req.user.role;
+  if (!["admin", "sub_admin", "super_admin"].includes(role)) {
+    return fail(res, 403, "Access denied. Admin role required.");
+  }
+
+  const { residentId, amountPKR, notes, billingMonth, status = "pending" } = req.body;
+
+  if (!residentId || !amountPKR || !notes) {
+    return fail(res, 400, "residentId, amountPKR, and notes are required.");
+  }
+
+  const amount = parseFloat(amountPKR);
+  if (Number.isNaN(amount) || amount <= 0) {
+    return fail(res, 400, "amountPKR must be a positive number.");
+  }
+
+  if (!["pending", "paid"].includes(status)) {
+    return fail(res, 400, "status must be 'pending' or 'paid'.");
+  }
+
+  try {
+    const scopeSocietyId = role === "super_admin" ? null : await getSocietyIdForRequester(req.user);
+
+    const residentQ = await pool.query(
+      `SELECT id, first_name, last_name, society_id FROM users WHERE id = $1 AND role = 'resident'`,
+      [Number.parseInt(residentId, 10)]
+    );
+    const resident = residentQ.rows[0];
+    if (!resident) return fail(res, 404, "Resident not found.");
+    if (scopeSocietyId && resident.society_id !== scopeSocietyId) {
+      return fail(res, 403, "Resident is outside your society scope.");
+    }
+
+    const billingMonthDate = billingMonth
+      ? new Date(`${billingMonth}-01`)
+      : getBillingMonthStart(new Date());
+    const billingMonthStr = toIsoDate(billingMonthDate);
+    const dueDate = toIsoDate(getDueDateForMonth(billingMonthDate));
+    const amountCents = Math.round(amount * 100);
+    const paidAt = status === "paid" ? new Date().toISOString() : null;
+
+    const result = await pool.query(
+      `INSERT INTO resident_dues_payments
+        (user_id, society_id, billing_month, due_date, amount_cents, currency, status, due_type, notes, paid_at, payment_method, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'adjustment', $8, $9, $10, $11)
+       RETURNING *`,
+      [
+        resident.id,
+        resident.society_id,
+        billingMonthStr,
+        dueDate,
+        amountCents,
+        STRIPE_CURRENCY,
+        status,
+        notes,
+        paidAt,
+        status === "paid" ? "manual" : null,
+        JSON.stringify({ reason: "Admin manual adjustment", admin_id: req.user.id }),
+      ]
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: "Balance adjustment recorded.",
+      record: result.rows[0],
+    });
+  } catch (error) {
+    console.error("Admin adjust balance error:", error);
+    return fail(res, error.status || 500, error.message || "Failed to create adjustment.");
+  }
+};
+
+const adminMarkDuePaid = async (req, res) => {
+  const role = req.user.role;
+  if (!["admin", "sub_admin", "super_admin"].includes(role)) {
+    return fail(res, 403, "Access denied. Admin role required.");
+  }
+
+  const dueId = Number.parseInt(req.params.dueId, 10);
+  if (!Number.isFinite(dueId) || dueId <= 0) {
+    return fail(res, 400, "Invalid dueId.");
+  }
+
+  const { paymentMethod = "manual", notes } = req.body || {};
+
+  try {
+    const scopeSocietyId = role === "super_admin" ? null : await getSocietyIdForRequester(req.user);
+
+    const dueQ = await pool.query(
+      `SELECT rdp.*, u.society_id AS user_society_id
+       FROM resident_dues_payments rdp
+       JOIN users u ON u.id = rdp.user_id
+       WHERE rdp.id = $1`,
+      [dueId]
+    );
+    const due = dueQ.rows[0];
+    if (!due) return fail(res, 404, "Due record not found.");
+    if (scopeSocietyId && due.society_id !== scopeSocietyId) {
+      return fail(res, 403, "Due record is outside your society scope.");
+    }
+    if (due.status === "paid") {
+      return fail(res, 400, "This due is already marked as paid.");
+    }
+
+    await pool.query(
+      `UPDATE resident_dues_payments
+       SET status = 'paid',
+           paid_at = CURRENT_TIMESTAMP,
+           payment_method = $1,
+           notes = COALESCE($2, notes),
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = $3`,
+      [paymentMethod, notes || null, dueId]
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Due marked as paid.",
+    });
+  } catch (error) {
+    console.error("Admin mark due paid error:", error);
+    return fail(res, error.status || 500, error.message || "Failed to mark due as paid.");
   }
 };
 
@@ -760,4 +986,7 @@ module.exports = {
   getAdminOverview,
   getAdminRecords,
   getResidentHistoryForAdmin,
+  adminAdjustBalance,
+  adminMarkDuePaid,
+  getOutstandingBreakdown,
 };

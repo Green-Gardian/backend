@@ -44,6 +44,9 @@ const {
     getAdminOverview,
     getAdminRecords,
     getResidentHistoryForAdmin,
+    adminAdjustBalance,
+    adminMarkDuePaid,
+    getOutstandingBreakdown,
 } = require('../controllers/duesController');
 
 // Middleware to verify if user is a Admin
@@ -120,6 +123,9 @@ router.post('/dues/verify-session', verifyResident, verifyDueCheckoutSession);
 router.get('/admin/dues/overview', verifyAdmin, getAdminOverview);
 router.get('/admin/dues/records', verifyAdmin, getAdminRecords);
 router.get('/admin/dues/resident/:residentId/history', verifyAdmin, getResidentHistoryForAdmin);
+router.get('/admin/dues/outstanding', verifyAdmin, getOutstandingBreakdown);
+router.post('/admin/dues/adjust', verifyAdmin, adminAdjustBalance);
+router.put('/admin/dues/:dueId/mark-paid', verifyAdmin, adminMarkDuePaid);
 
 // ===== USER PROFILE ROUTES =====
 router.post('/profile', verifyAdminOrResident, addUserProfile);
