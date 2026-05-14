@@ -206,18 +206,23 @@ const createDueCheckoutSession = async (req, res) => {
 
   try {
     const stripe = getStripeClient();
-    const societyId = await getSocietyIdForRequester(req.user);
-    const dueState = await ensureCurrentDueRecord(pool, req.user.id, societyId, new Date());
 
-    if (dueState.noDueForCurrentMonth || !dueState.due) {
-      return fail(res, 400, "No monthly dues are generated in your signup month.");
+    // Get ALL pending/overdue dues for this user
+    const pendingQ = await pool.query(
+      `SELECT * FROM resident_dues_payments
+       WHERE user_id = $1 AND status IN ('pending', 'overdue')
+       ORDER BY billing_month ASC`,
+      [req.user.id]
+    );
+
+    const pendingDues = pendingQ.rows;
+
+    if (pendingDues.length === 0) {
+      return fail(res, 400, "No pending dues found. All dues are paid.");
     }
 
-    const due = dueState.due;
-
-    if (due.status === "paid") {
-      return fail(res, 400, "Monthly dues are already paid.", { dueStatus: mapDueForClient(dueState) });
-    }
+    const totalAmountCents = pendingDues.reduce((sum, d) => sum + Number(d.amount_cents), 0);
+    const dueIds = pendingDues.map(d => d.id);
 
     const userQ = await pool.query(
       `SELECT id, first_name, last_name, email FROM users WHERE id = $1 LIMIT 1`,
@@ -276,41 +281,39 @@ const createDueCheckoutSession = async (req, res) => {
           quantity: 1,
           price_data: {
             currency: STRIPE_CURRENCY,
-            unit_amount: due.amount_cents,
+            unit_amount: totalAmountCents,
             product_data: {
-              name: `Green Guardian Monthly Dues (${due.billing_month})`,
-              description: `Resident monthly dues for ${due.billing_month}`,
+              name: `Green Guardian Dues — ${pendingDues.length} item${pendingDues.length > 1 ? 's' : ''}`,
+              description: `Clears all pending dues (${pendingDues.length} record${pendingDues.length > 1 ? 's' : ''})`,
             },
           },
         },
       ],
       metadata: {
         userId: String(req.user.id),
-        duePaymentId: String(due.id),
-        billingMonth: String(due.billing_month),
+        duePaymentId: dueIds.join(','),   // comma-separated all due IDs
+        payAllDues: 'true',
       },
     });
 
+    // Tag ALL pending dues with this session
     await pool.query(
-      `
-        UPDATE resident_dues_payments
-        SET stripe_checkout_session_id = $1,
-            stripe_customer_id = $2,
-            status = CASE WHEN status = 'overdue' THEN 'overdue' ELSE 'pending' END,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = $3
-      `,
-      [checkoutSession.id, stripeCustomerId, due.id]
+      `UPDATE resident_dues_payments
+       SET stripe_checkout_session_id = $1,
+           stripe_customer_id = $2,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ANY($3::int[])`,
+      [checkoutSession.id, stripeCustomerId, dueIds]
     );
 
     return res.status(201).json({
       success: true,
       checkoutUrl: checkoutSession.url,
       checkoutSessionId: checkoutSession.id,
-      amount: due.amount_cents / 100,
-      amountCents: due.amount_cents,
+      amount: totalAmountCents / 100,
+      amountCents: totalAmountCents,
       currency: STRIPE_CURRENCY,
-      dueStatus: mapDueForClient(dueState),
+      duesCount: pendingDues.length,
       sandbox: true,
     });
   } catch (error) {
@@ -341,40 +344,42 @@ const verifyDueCheckoutSession = async (req, res) => {
     }
 
     const dueQ = await pool.query(
-      `SELECT * FROM resident_dues_payments WHERE user_id = $1 AND stripe_checkout_session_id = $2 LIMIT 1`,
+      `SELECT * FROM resident_dues_payments WHERE user_id = $1 AND stripe_checkout_session_id = $2`,
       [req.user.id, sessionId]
     );
 
-    if (!dueQ.rows[0]) {
+    if (dueQ.rows.length === 0) {
       return fail(res, 404, "Due payment record not found for this session.");
     }
 
-    const due = dueQ.rows[0];
     const paymentIntent = session.payment_intent;
     const latestCharge = paymentIntent?.latest_charge || null;
     const paymentMethod = latestCharge?.payment_method_details?.type || session.payment_method_types?.[0] || "card";
     const paymentStatus = session.payment_status;
+    const receiptUrl = latestCharge?.receipt_url || null;
+    const piId = typeof paymentIntent === "object" ? paymentIntent?.id : paymentIntent || null;
 
-    await finalizeDuePayment({
-      due,
-      paymentStatus,
-      paymentIntent: typeof paymentIntent === "object" ? paymentIntent.id : paymentIntent || null,
-      paymentMethod,
-      receiptUrl: latestCharge?.receipt_url || null,
-      failureReason: session.status === "expired" ? "Checkout session expired" : null,
-    });
+    // Mark ALL dues linked to this session
+    for (const due of dueQ.rows) {
+      await finalizeDuePayment({
+        due,
+        paymentStatus,
+        paymentIntent: piId,
+        paymentMethod,
+        receiptUrl,
+        failureReason: session.status === "expired" ? "Checkout session expired" : null,
+      });
+    }
 
-    const societyId = await getSocietyIdForRequester(req.user);
-    const dueState = await ensureCurrentDueRecord(pool, req.user.id, societyId, new Date());
+    const allPaid = paymentStatus === "paid";
 
     return res.status(200).json({
       success: true,
       paymentStatus,
-      dueStatus: mapDueForClient(dueState),
-      message:
-        dueState?.due?.status === "paid"
-          ? "Payment verified successfully. Special collection access is restored."
-          : "Payment is not completed yet.",
+      duesUpdated: dueQ.rows.length,
+      message: allPaid
+        ? `Payment successful. ${dueQ.rows.length} due(s) cleared.`
+        : "Payment is not completed yet.",
     });
   } catch (error) {
     console.error("Verify checkout session error:", error);
@@ -496,6 +501,21 @@ const getAdminOverview = async (req, res) => {
     const total = Number.parseInt(row.total_records, 10) || 0;
     const paid = Number.parseInt(row.paid_count, 10) || 0;
 
+    // Service delivery stats for this society/month
+    const serviceQ = await pool.query(
+      `SELECT
+         COUNT(*) FILTER (WHERE sr.status = 'completed') AS completed_services,
+         COUNT(*) FILTER (WHERE sr.status IN ('assigned','in_progress','approved')) AS active_services,
+         COALESCE(SUM(rdp.amount_cents) FILTER (WHERE rdp.due_type = 'service_request' AND rdp.status IN ('pending','overdue')), 0) AS service_fees_outstanding_cents,
+         COALESCE(SUM(rdp.amount_cents) FILTER (WHERE rdp.due_type = 'service_request' AND rdp.status = 'paid'), 0) AS service_fees_collected_cents
+       FROM service_requests sr
+       LEFT JOIN resident_dues_payments rdp ON rdp.service_request_id = sr.id
+       WHERE ($1::int IS NULL OR sr.society_id = $1)
+         AND DATE_TRUNC('month', sr.created_at) = DATE_TRUNC('month', $2::date)`,
+      [scopeSocietyId, monthStart]
+    );
+    const sRow = serviceQ.rows[0] || {};
+
     return res.status(200).json({
       success: true,
       overview: {
@@ -509,6 +529,11 @@ const getAdminOverview = async (req, res) => {
         totalCollected: (Number.parseInt(row.total_collected_cents, 10) || 0) / 100,
         totalOutstanding: (Number.parseInt(row.total_outstanding_cents, 10) || 0) / 100,
         currency: STRIPE_CURRENCY,
+        // Service delivery stats
+        completedServices: Number.parseInt(sRow.completed_services, 10) || 0,
+        activeServices: Number.parseInt(sRow.active_services, 10) || 0,
+        serviceFeesOutstanding: (Number.parseInt(sRow.service_fees_outstanding_cents, 10) || 0) / 100,
+        serviceFeesCollected: (Number.parseInt(sRow.service_fees_collected_cents, 10) || 0) / 100,
       },
     });
   } catch (error) {
@@ -552,6 +577,8 @@ const getAdminRecords = async (req, res) => {
           rdp.stripe_payment_intent_id,
           rdp.receipt_url,
           rdp.updated_at,
+          rdp.due_type,
+          rdp.service_request_id,
           u.first_name,
           u.last_name,
           u.email,
@@ -621,6 +648,9 @@ const getAdminRecords = async (req, res) => {
         stripePaymentIntentId: row.stripe_payment_intent_id,
         receiptUrl: row.receipt_url,
         updatedAt: row.updated_at,
+        dueType: row.due_type || 'monthly',
+        serviceRequestId: row.service_request_id || null,
+        isServiceFee: row.due_type === 'service_request',
       })),
       pagination: {
         page,

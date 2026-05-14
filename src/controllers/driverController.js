@@ -719,24 +719,24 @@ const getDashboardStats = async (req, res) => {
     const totalRes = await pool.query(totalQ, [driverId]);
     const totalCollections = totalRes.rows[0].count;
 
-    // Get average rating from service_requests
-    let rating = 5.0; // Default rating if no ratings exist
+    // Get average rating from feedback table (overall_rating submitted by residents)
+    let rating = null;
+    let ratingCount = 0;
     try {
       const ratingQ = `
-        SELECT COALESCE(AVG(driver_rating), 5.0) as avg_rating,
-               COUNT(driver_rating) as rating_count
-        FROM service_requests
-        WHERE driver_id = $1
-        AND driver_rating IS NOT NULL
+        SELECT AVG(f.overall_rating)::numeric(3,2) as avg_rating,
+               COUNT(f.overall_rating)::int as rating_count
+        FROM service_feedback f
+        WHERE f.driver_id = $1
+        AND f.overall_rating IS NOT NULL
       `;
       const ratingRes = await pool.query(ratingQ, [driverId]);
-
-      if (ratingRes.rows[0].rating_count > 0) {
+      ratingCount = ratingRes.rows[0].rating_count || 0;
+      if (ratingCount > 0) {
         rating = parseFloat(ratingRes.rows[0].avg_rating).toFixed(1);
       }
     } catch (e) {
       console.log('Error fetching driver rating:', e.message);
-      // Keep default rating of 5.0
     }
 
     return res.status(200).json({
@@ -744,8 +744,8 @@ const getDashboardStats = async (req, res) => {
       stats: {
         todayCollections,
         totalCollections,
-        rating,
-        // workAreas removed as requested
+        rating,        // null when no reviews yet
+        ratingCount,
       }
     });
 

@@ -10,6 +10,7 @@ const QRCode = require("qrcode");
 const { generateTokens } = require("../utils/generateToken");
 const { hashPassword, comparePassword } = require("../utils/hashPassword");
 const { logSubAdminActivity } = require("../services/subAdminLogger");
+const websocketService = require("../services/websocketService");
 
 // Generate OTP function
 const generateOTP = () => {
@@ -879,14 +880,8 @@ const updateProfile = async (req, res) => {
     let { first_name, last_name, phone_number, email, profile_picture } =
       req.body;
 
-    if (
-      !first_name ||
-      !last_name ||
-      !phone_number ||
-      !email ||
-      !profile_picture
-    ) {
-      return res.status(400).json({ message: "All fields  are required" });
+    if (!first_name || !last_name || !phone_number || !email) {
+      return res.status(400).json({ message: "first_name, last_name, phone_number and email are required" });
     }
 
     console.log("Checkpoint 1");
@@ -920,17 +915,17 @@ const updateProfile = async (req, res) => {
 
     const updateQuery = await pool.query(
       `
-      UPDATE users 
-      SET first_name = $1, 
-          last_name = $2, 
-          phone_number = $3, 
+      UPDATE users
+      SET first_name = $1,
+          last_name = $2,
+          phone_number = $3,
           email = $4,
-          profile_picture = $5,
+          profile_picture = COALESCE($5, profile_picture),
           updated_at = NOW()
       WHERE id = $6
       RETURNING id, first_name, last_name, username, phone_number, email, profile_picture, role, society_id, is_verified, is_blocked, created_at, updated_at
       `,
-      [first_name, last_name, phone_number, email, profile_picture, userId]
+      [first_name, last_name, phone_number, email, profile_picture || null, userId]
     );
 
     console.log("Checkpoint 4");
@@ -1696,6 +1691,17 @@ const blockUser = async (req, res) => {
         activityType: "BLOCK_USER",
         description: `Sub Admin ${req.user.id} ${isBlocked ? 'blocked' : 'unblocked'} user with email: ${result.rows[0].email} at ${Date.now()}`,
       });
+    }
+
+    // Force-logout the blocked user's active sessions in real-time
+    if (isBlocked) {
+      try {
+        websocketService.sendToUser(userId, 'force-logout', {
+          reason: 'Your account has been blocked by an administrator.',
+        });
+      } catch (e) {
+        console.error('Failed to send force-logout to user:', e.message);
+      }
     }
 
     return res.status(200).json({

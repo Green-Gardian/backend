@@ -130,7 +130,7 @@ router.put('/profile', verifyAdminOrResident, updateUserProfile);
 router.get('/addresses', verifyAdminOrResident, getUserAddresses);
 router.post('/addresses', verifyAdminOrResident, addUserAddress);
 router.put('/addresses/:addressId', verifyAdminOrResident, updateUserAddress);
-router.delete('/addresses/:addressId', verifyAdmin, deleteUserAddress);
+router.delete('/addresses/:addressId', verifyAdminOrResident, deleteUserAddress);
 
 // ===== SERVICE REQUEST ROUTES =====
 router.post('/service-requests', verifyResident, createServiceRequest);
