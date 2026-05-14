@@ -571,9 +571,10 @@ const getAdminRecords = async (req, res) => {
     const statusParam = req.query.status || null;
     const search = (req.query.search || "").trim().toLowerCase();
 
-    // 'outstanding' is a virtual status meaning pending + overdue across all months
+    // 'outstanding' = pending+overdue across all months; 'paid' also shows all months
     const isOutstanding = statusParam === "outstanding";
-    const effectiveMonth = isOutstanding ? null : (month ? `${month}-01` : null);
+    const crossMonth = isOutstanding || statusParam === "paid";
+    const effectiveMonth = crossMonth ? null : (month ? `${month}-01` : null);
 
     const params = [scopeSocietyId, effectiveMonth, search ? `%${search}%` : null, limit, offset];
     const statusClause = isOutstanding

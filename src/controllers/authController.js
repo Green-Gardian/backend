@@ -248,7 +248,6 @@ const addAdminAndStaff = async (req, res) => {
         ]
     );
     const newUser = userInsert.rows[0];
-    console.log(`[User] ✅ Staff created — id=${newUser.id} role=${role} name="${firstName} ${lastName}" email=${email} society=${finalSocietyId ?? 'N/A'}`);
 
     if (currentUser.role === "sub_admin") {
       await logSubAdminActivity({
@@ -291,10 +290,10 @@ const addAdminAndStaff = async (req, res) => {
         if (adminId) {
           await ChatService.createChat(finalSocietyId, [newUser.id, adminId], `${firstName} ${lastName}`);
         } else {
-          console.warn(`[Chat] ⚠️ No admin found for society ${finalSocietyId} — chat not created for driver ${newUser.id}`);
+          console.warn(`[chat] no admin found for society ${finalSocietyId}, chat not created for driver ${newUser.id}`);
         }
       } catch (err) {
-        console.error(`[Chat] ❌ Failed to create chat for driver ${newUser.id}:`, err.message);
+        console.error(`[chat] failed to create chat for driver ${newUser.id}:`, err.message);
       }
     }
 
@@ -427,7 +426,6 @@ const addResident = async (req, res) => {
     );
 
     const newUser = insertUser.rows[0];
-    console.log(`[User] ✅ Resident created — id=${newUser.id} name="${first_name} ${last_name}" email=${email} society=${societyId}`);
 
     // Create Customer Support Chat with Society Admin
     try {
@@ -436,10 +434,10 @@ const addResident = async (req, res) => {
       if (adminId) {
         await ChatService.createChat(societyId, [newUser.id, adminId], `${first_name} ${last_name}`);
       } else {
-        console.warn(`[Chat] ⚠️ No admin found for society ${societyId} — chat not created for resident ${newUser.id}`);
+        console.warn(`[chat] no admin found for society ${societyId}, chat not created for resident ${newUser.id}`);
       }
     } catch (chatError) {
-      console.error(`[Chat] ❌ Failed to create chat for resident ${newUser.id}:`, chatError.message);
+      console.error(`[chat] failed to create chat for resident ${newUser.id}:`, chatError.message);
     }
 
     if (requesterData.role === "sub_admin") {
@@ -466,7 +464,7 @@ const addResident = async (req, res) => {
       message: `Resident created. Email sent to verify and set password.`,
     });
   } catch (error) {
-    console.error(`❌ Error creating resident: ${error.message}`);
+    console.error(`Error creating resident: ${error.message}`);
     return res.status(500).json({ error: "Server Error" });
   }
 };
@@ -874,8 +872,6 @@ const changePassword = async (req, res) => {
 
 const updateProfile = async (req, res) => {
   try {
-    console.log("Update profile request body:", req.body);
-
     const userId = req.user.id;
     let { first_name, last_name, phone_number, email, profile_picture } =
       req.body;
@@ -883,8 +879,6 @@ const updateProfile = async (req, res) => {
     if (!first_name || !last_name || !phone_number || !email) {
       return res.status(400).json({ message: "first_name, last_name, phone_number and email are required" });
     }
-
-    console.log("Checkpoint 1");
 
     const phoneCheck = await pool.query(
       `SELECT * FROM users WHERE phone_number = $1 AND id != $2`,
@@ -894,9 +888,6 @@ const updateProfile = async (req, res) => {
       return res.status(400).json({ message: "Phone number already in use." });
     }
 
-    console.log("Checkpoint 2");
-
-    //check if the email format is valid
     const regex = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
     if (!regex.test(email)) {
       return res.status(400).json({ message: "Invalid email address" });
@@ -910,8 +901,6 @@ const updateProfile = async (req, res) => {
     if (emailCheck.rows.length > 0) {
       return res.status(400).json({ message: "Email already in use." });
     }
-
-    console.log("Checkpoint 3");
 
     const updateQuery = await pool.query(
       `
@@ -927,8 +916,6 @@ const updateProfile = async (req, res) => {
       `,
       [first_name, last_name, phone_number, email, profile_picture || null, userId]
     );
-
-    console.log("Checkpoint 4");
 
     if (req.user.role === "sub_admin") {
       await logSubAdminActivity({
@@ -1410,10 +1397,6 @@ const getAllUsers = async (req, res) => {
 
 //Get users based on society id
 const getUsersBySociety = async (req, res) => {
-  console.log("Get users by society request initiated");
-
-  console.log("Requesting user info:", req.user);
-
   try {
     const userId = req.user.id;
 

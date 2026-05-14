@@ -6,7 +6,7 @@ const websocketService = require("../services/websocketService");
 const {
   ensureCurrentDueRecord,
   getMonthlyDuesAmount,
-  getNextBillingMonthStart,
+  getBillingMonthStart,
   getDueDateForMonth,
   toIsoDate,
 } = require("../services/duesService");
@@ -191,7 +191,7 @@ const rateDriver = async (req, res) => {
       [rating, comment || null, requestId]
     );
 
-    console.log(`✅ Driver rated ${rating}/5 for service request #${requestId} by user ${userId}`);
+    console.log(`[rating] driver rated ${rating}/5 for request #${requestId}`);
 
     return res.status(200).json({
       success: true,
@@ -523,7 +523,7 @@ const createServiceRequest = async (req, res) => {
 
     // Add service request fee based on selected service type's base_price (min Rs.500)
     const serviceRequestId = q.rows[0].id;
-    const billingMonthDate = getNextBillingMonthStart(new Date());
+    const billingMonthDate = getBillingMonthStart(new Date());
     const billingMonth = toIsoDate(billingMonthDate);
     const dueDate = toIsoDate(getDueDateForMonth(billingMonthDate));
 
@@ -575,9 +575,9 @@ const createServiceRequest = async (req, res) => {
           }),
         ]
       );
-      console.log(`✅ Rs.${feeAmount} service fee added to dues for Service Request #${serviceRequestId}`);
+      console.log(`[dues] service fee Rs.${feeAmount} created for request #${serviceRequestId}`);
     } catch (feeErr) {
-      console.error(`⚠️ Failed to add service fee for Service Request #${serviceRequestId}:`, feeErr);
+      console.error(`[dues] failed to create service fee for request #${serviceRequestId}:`, feeErr);
       // Continue - fees failure should not block service request creation
     }
 
@@ -586,7 +586,7 @@ const createServiceRequest = async (req, res) => {
     try {
       assignment = await assignmentService.assignServiceRequest(serviceRequestId, websocketService);
       if (assignment) {
-        console.log(`✅ Service Request #${serviceRequestId} auto-assigned to driver ${assignment.driver.id}`);
+        console.log(`[assignment] request #${serviceRequestId} assigned to driver ${assignment.driver.id}`);
         // Refresh the service request data to include driver info
         const updatedRequest = await run(
           `SELECT * FROM service_requests WHERE id = $1`,
@@ -604,7 +604,7 @@ const createServiceRequest = async (req, res) => {
         });
       }
     } catch (assignErr) {
-      console.error(`⚠️ Auto-assignment failed for Service Request #${serviceRequestId}:`, assignErr);
+      console.error(`[assignment] auto-assign failed for request #${serviceRequestId}:`, assignErr);
       // Continue without assignment - request stays in 'pending' for manual assignment
     }
 

@@ -167,8 +167,7 @@ class WebSocketService {
             const token = socket.handshake.auth?.token;
 
             if (!token) {
-                console.log("No token provided, disconnecting socket");
-                socket.disconnect();
+                    socket.disconnect();
                 return;
             }
 
@@ -182,7 +181,6 @@ class WebSocketService {
             // Join personal room
             socket.join(`user_${decoded.id}`);
 
-            console.log("User connected via JWT:", socket.user.id, socket.user.username);
         } catch (err) {
             console.error("Invalid token:", err.message);
             socket.disconnect();
@@ -197,11 +195,6 @@ class WebSocketService {
         try {
             const { userId, societyId, role } = data;
 
-            console.log(`\n🔐 Authentication request received:`);
-            console.log(`   User ID: ${userId} (type: ${typeof userId})`);
-            console.log(`   Society ID: ${societyId}`);
-            console.log(`   Role: ${role}`);
-            console.log(`   Socket ID: ${socket.id}`);
 
             if (!userId) {
                 socket.emit('auth-error', { message: 'Invalid authentication data' });
@@ -226,17 +219,12 @@ class WebSocketService {
             // Join society room only when societyId is available
             if (societyId) {
                 socket.join(`society_${societyId}`);
-                console.log(`   ✅ Joined society room: society_${societyId}`);
             }
 
-            // Join user-specific room for personal notifications
             socket.join(`user_${userIdKey}`);
-            console.log(`   ✅ Joined user room: user_${userIdKey}`);
 
-            // Join role-specific room
             if (role) {
                 socket.join(`role_${role}`);
-                console.log(`   ✅ Joined role room: role_${role}`);
             }
 
             socket.emit('authenticated', {
@@ -246,12 +234,9 @@ class WebSocketService {
                 role
             });
 
-            console.log(`✅ User ${userIdKey} authenticated successfully on socket ${socket.id}`);
-            console.log(`📊 Total connected users: ${this.userSockets.size}`);
-            console.log(`📊 User ${userIdKey} has ${this.userSockets.get(userIdKey)?.size || 0} active socket(s)\n`);
 
         } catch (error) {
-            console.error('❌ Authentication error:', error);
+            console.error('Authentication error:', error);
             socket.emit('auth-error', { message: 'Authentication failed' });
         }
     }
@@ -448,25 +433,15 @@ class WebSocketService {
                 timestamp: new Date().toISOString()
             };
 
-            console.log(`\n🔔 Attempting to send service request to driver ${driverId}`);
-            console.log(`📊 Connected users map size: ${this.userSockets.size}`);
-            console.log(`📊 User sockets for driver ${driverId}:`, this.userSockets.get(driverId));
-            console.log(`📊 User sockets for driver "${driverId}":`, this.userSockets.get(String(driverId)));
-            console.log(`📊 User sockets for driver ${Number(driverId)}:`, this.userSockets.get(Number(driverId)));
-            console.log(`📦 Payload:`, JSON.stringify(payload, null, 2));
-
             const sent = this.sendToUser(driverId, 'service-request:assigned', payload);
 
-            if (sent) {
-                console.log(`✅ Service request assignment notification sent to driver ${driverId}`);
-            } else {
-                console.log(`⚠️ Driver ${driverId} not connected or no active sockets found`);
-                console.log(`📋 All connected users:`, Array.from(this.userSockets.keys()));
+            if (!sent) {
+                console.warn(`Driver ${driverId} not connected — service request assignment not delivered via socket`);
             }
 
             return sent;
         } catch (error) {
-            console.error('❌ Error sending service request assignment to driver:', error);
+            console.error('Error sending service request assignment to driver:', error);
             return false;
         }
     }
@@ -482,7 +457,6 @@ class WebSocketService {
                 timestamp: new Date().toISOString()
             };
             this.sendToUser(residentId, 'service-request:driver-assigned', payload);
-            console.log(`✅ Service request driver assignment notification sent to resident ${residentId}`);
             return true;
         } catch (error) {
             console.error('Error sending service request assignment to resident:', error);
@@ -641,7 +615,6 @@ class WebSocketService {
     handleJoinRoom(socket, data) {
         try {
             const { chatId, userId } = data;
-            console.log(`Joining room with chat id: ${chatId}`);
 
             // Do NOT leave all other rooms. Users need to stay in society/role rooms.
             // If we want to limit to one active chat room, we'd need to track which room is a "chat" room.
@@ -653,7 +626,6 @@ class WebSocketService {
 
             const roomId = String(chatId);
             socket.join(roomId);
-            console.log(`User ${userId} joined room ${roomId}. Socket rooms:`, socket.rooms);
         } catch (error) {
             console.error('Join room error:', error);
             socket.emit('error', { message: 'Failed to join room' });
@@ -665,8 +637,6 @@ class WebSocketService {
      */
     async handleMessage(socket, data) {
         try {
-            console.log("handleMessage called with:", data);
-
             if (!socket.user) {
                 console.error("Socket has no user attached!");
                 socket.emit("messageSent", { success: false, error: "Unauthorized" });
@@ -677,9 +647,6 @@ class WebSocketService {
             const chatId = String(rawChatId); // normalize to string — matches joinRoom
             const senderId = socket.user.id;
             const sender_name = socket.user.username;
-
-            console.log("Sender ID from the user stored in the socket:", senderId);
-            console.log("Sender name from the user stored in the socket:", sender_name);
 
             const result = await pool.query(
                 `INSERT INTO message (chat_id, content, sender_id, sender_name)

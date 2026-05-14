@@ -526,7 +526,7 @@ const updateTaskStatus = async (req, res) => {
         [taskId, serviceRequest.status, status, req.user.id, notes ? (typeof notes === 'string' ? notes : JSON.stringify(notes)) : null]
       );
 
-      console.log(`✅ Service Request #${taskId} status updated to '${status}' by driver ${req.user.id}`);
+      console.log(`[request] #${taskId} status -> ${status} by driver ${req.user.id}`);
 
       return res.status(200).json({
         message: "Service request status updated successfully",

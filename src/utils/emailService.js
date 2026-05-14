@@ -10,9 +10,9 @@ class EmailService {
             );
             this.fromEmail = process.env.SENDER_EMAIL || 'no-reply@greenguardian.qzz.io';
             this.fromName = 'Green Guardian';
-            console.log('✅ Mailjet email service initialized');
+            console.log('Mailjet email service initialized');
         } else {
-            console.warn('⚠️ Mailjet API keys not configured.');
+            console.warn('Mailjet API keys not configured.');
             this.client = null;
         }
     }
@@ -34,10 +34,9 @@ class EmailService {
                 }]
             });
 
-            console.log(`✅ Email sent successfully to ${to}`);
             return result;
         } catch (error) {
-            console.error('❌ Error sending email:', error);
+            console.error('Error sending email:', error);
             if (!error.code) error.code = 'EMAIL_SEND_FAILED';
             throw error;
         }

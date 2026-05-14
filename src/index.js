@@ -202,7 +202,7 @@ server.listen(PORT, async () => {
        WHERE sentiment_label IS NULL OR sentiment_score IS NULL`
     );
     if (unanalyzed.rows.length > 0) {
-      console.log(`[sentiment-backfill] Found ${unanalyzed.rows.length} unanalyzed feedback records. Running backfill...`);
+      console.log(`[sentiment-backfill] ${unanalyzed.rows.length} records missing sentiment, running backfill`);
       let updated = 0;
       for (const row of unanalyzed.rows) {
         try {
@@ -222,9 +222,7 @@ server.listen(PORT, async () => {
           console.error(`[sentiment-backfill] Failed for feedback #${row.id}:`, err.message);
         }
       }
-      console.log(`[sentiment-backfill] Done. Updated ${updated}/${unanalyzed.rows.length} records.`);
-    } else {
-      console.log('[sentiment-backfill] All feedback already analyzed.');
+      console.log(`[sentiment-backfill] done, updated ${updated}/${unanalyzed.rows.length}`);
     }
   } catch (err) {
     console.error('[sentiment-backfill] Startup backfill error:', err.message);
